@@ -5,4 +5,4 @@ We obtained publicly available bulk RNA-Seq datasets from the Accelerating Medic
 
 __SETUP: data wrangling before dimensionality reduction and differential expression\
 __DE: dimentionality reduction, batch correction, outlier removal, differential expression analysis, gene ontology and KEGG enrichment\
-__FIGS: figures created from analysis\
+__FIGS: figures created from analysis
