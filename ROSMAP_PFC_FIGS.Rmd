@@ -1,0 +1,301 @@
+---
+title: "ROSMAP_DLPFC_RNASeq_FIGS"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+Plots for ROSMAP PFC DE results
+dittoseq colors: diag [1:2] apoe[3:4] sex [5:6] age [8:11] batch [12:17]
+Differential Expression Analysis: 
+Up and Downregulated (Fold Change +/- 1.3 or 0.4 log FC, padj < 0.05)
+To help compare several combinations of levels https://www.biostars.org/p/325009/
+log2cutoff <- 0.4
+qvaluecutoff <- 0.05
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Input DEG data
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+e4neg<- read.csv("ros_pfc_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+e4pos<- read.csv("ros_pfc_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+e4neg$X<- NULL
+e4pos$X<- NULL
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Load necessary libraries
+```{r}
+library(DESeq2)
+library(tidyverse)
+library(RColorBrewer)
+library(pheatmap)
+library(DEGreport)
+library(tximport)
+library(ggplot2)
+library(ggrepel)
+library(magrittr)
+library(limma)
+library(DittoSeq)
+```
+
+How many DEGs in each dataset
+```{r}
+e4neg.markers<- subset(e4neg, padj < 0.05 & abs(log2FoldChange) > 0.4)
+e4neg.markers$group<- "e4neg"
+table(e4neg.markers$dir) # 20 down  66 up
+
+e4pos.markers<- subset(e4pos, padj < 0.05 & abs(log2FoldChange) > 0.4)
+e4pos.markers$group<- "e4pos"
+table(e4pos.markers$dir) # 2 down 4 up
+```
+
+Pairwise DEG plot 
+```{r}
+colnames(e4neg)
+#select gene(7), p_val_adj (6), and avg_logF (3) 
+#Note these are unfiltered DE tables, so it includes insignificant and low thresholds
+full.markers<- dplyr::full_join(e4neg[,c(7,6,3)],e4pos[,c(7,6,3)], by ="external_gene_name") #18680
+full.markers<- na.omit(full.markers) #16861
+full.markers$match<- ifelse(full.markers$log2FoldChange.x >0  & full.markers$log2FoldChange.y >0, "same","opp")
+full.markers$match<- ifelse(full.markers$log2FoldChange.x <0  & full.markers$log2FoldChange.y <0, "same",full.markers$match)
+full.markers$sig<- ifelse(full.markers$padj.x <0.05,"<0.05 in APOE4 Negative","Not Significant")
+full.markers$sig<- ifelse(full.markers$padj.y <0.05,"<0.05 in APOE4 Positive",full.markers$sig)
+full.markers$sig<- ifelse(full.markers$padj.x <0.05 & full.markers$padj.y <0.05 & full.markers$match == "same","<0.05 in Both & Same Direction",full.markers$sig)
+full.markers$sig<- ifelse(full.markers$padj.x <0.05 & full.markers$padj.y <0.05 & full.markers$match == "opp","<0.05 in Both & Opp Direction",full.markers$sig)
+table(full.markers$sig)
+full.markers$sig<- as.factor(full.markers$sig)
+full.markers$sigcols<- ifelse(full.markers$sig == "<0.05 in APOE4 Negative", dittoColors()[3], "#636363")
+full.markers$sigcols<- ifelse(full.markers$sig == "<0.05 in APOE4 Positive", dittoColors()[4],full.markers$sigcols)
+full.markers$sigcols<- ifelse(full.markers$sig == "<0.05 in Both & Opp Direction" , "#D55E00" ,full.markers$sigcols)
+full.markers$sigcols<- ifelse(full.markers$sig == "<0.05 in Both & Same Direction" ,"#0072B2"  ,full.markers$sigcols)
+full.markers$sig2<- ifelse(full.markers$sig == "Not Significant","0","1")
+
+unique(full.markers$sig) #order: 33,34,opp, same, not sig
+range(full.markers$log2FoldChange.x) # -0.9337316  1.1367897
+range(full.markers$log2FoldChange.y) #-0.6991596  1.5192665
+ 
+#assign colors
+my_col <- as.character(full.markers$sigcols)
+names(my_col) <- as.character(full.markers$sig)
+table(full.markers$sig)
+
+#pdf("rosmap_pfc_lfc.pdf")
+ggplot(full.markers, aes(x= log2FoldChange.x, y=log2FoldChange.y, color= sig)) + geom_point(size=0.5) + labs(title="ROSMAP Dorsolateral Prefrontal Cortex", color="Adjusted p-value (BH)") + xlab("APOE4 Negative Log2 FC") + ylab("APOE4 Positive Log2 FC") + theme_bw() + scale_y_continuous(breaks = seq(-2,2, 1)) + scale_x_continuous(breaks = seq(-2,1.5, 1)) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + geom_vline(xintercept = 0) +geom_hline(yintercept = 0) +  scale_color_manual(values=my_col) + theme(legend.position="none", axis.text=element_text(size=20), axis.title=element_text(size=20), plot.title = element_text(size=20)) +  geom_text(data=subset(full.markers,sig2 == "1" & abs(log2FoldChange.x) > 0.4 |sig2 == "1" & abs(log2FoldChange.y) > 0.4), size=7,check_overlap= TRUE, aes(label = external_gene_name))  + geom_vline(xintercept=c(-0.4,0.4), linetype="dotted") + geom_hline(yintercept=c(-0.4,0.4), linetype="dotted") + expand_limits(x= -1.5) + expand_limits(x= 1.25) 
+
+ggplot(full.markers, aes(x= log2FoldChange.x, y=log2FoldChange.y, color= sig)) + geom_point(size=0.5) + labs(title="ROSMAP Dorsolateral Prefrontal Cortex", color="Adjusted p-value (BH)") + xlab("APOE4 Negative Log2 FC") + ylab("APOE4 Positive Log2 FC") + theme_bw() + scale_y_continuous(breaks = seq(-2,4, 1)) + scale_x_continuous(breaks = seq(-2,4, 1)) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + geom_vline(xintercept = 0) +geom_hline(yintercept = 0) +  scale_color_manual(values=my_col) + theme(legend.text = element_text( size = 20), legend.title = element_text( size = 20), axis.text=element_text(size=20), axis.title=element_text(size=20), plot.title = element_text(size=20)) +  geom_text(data=subset(full.markers,sig2 == "1" & abs(log2FoldChange.x) > 0.4 |sig2 == "1" & abs(log2FoldChange.y) > 0.4), size=7,check_overlap= TRUE, aes(label = external_gene_name))  + geom_vline(xintercept=c(-0.4,0.4), linetype="dotted") + geom_hline(yintercept=c(-0.4,0.4), linetype="dotted") + guides(color = guide_legend(override.aes = list(size=5)),text = guide_legend(label = FALSE))
+
+#legend.text = element_text( size = 20), legend.title = element_text( size = 20)
+#+ guides(color = guide_legend(override.aes = list(size=5)),text = guide_legend(label = FALSE))
+#Plot genes that are significant, and have a log2FC of > 0.25 in either APOE group
+#dev.off()
+```
+
+Volcano Plots
+```{r}
+library("ggplot2") #Best plots
+library("ggrepel") #Avoid overlapping labels
+
+results = e4neg[!is.na(e4neg$padj),]
+results = mutate(results, Significance=ifelse(results$padj<0.05, "FDR < 0.05", "Not Significant"))
+results = mutate(results, Significance=ifelse(results$padj<0.05 & abs(results$log2FoldChange) > 0.4 , "FDR < 0.05 & |LFC| > 0.4", Significance ))
+levels(factor(results$Significance))
+
+#pdf("rosmap_pfc_e4neg_ad_v_c_volcano.pdf")
+ggplot(results, aes(log2FoldChange, -log10(pvalue))) +  labs(title="ROSMAP DLPFC APOE4-Negative [66 up, 20 down]") + geom_point(aes(col=Significance)) + scale_color_manual(values=c("goldenrod", "dodgerblue", "lightgrey")) +geom_text_repel(data=filter(results, padj<0.05 & abs(log2FoldChange) >0.6) , aes(label=external_gene_name))
+#dev.off()
+
+results = e4pos[!is.na(e4pos$padj),]
+results = mutate(results, Significance=ifelse(results$padj<0.05, "FDR < 0.05", "Not Significant"))
+results = mutate(results, Significance=ifelse(results$padj<0.05 & abs(results$log2FoldChange) > 0.4 , "FDR < 0.05 & |LFC| > 0.4", Significance ))
+levels(factor(results$Significance))
+
+#pdf("rosmap_pfc_e4pos_ad_v_c_volcano.pdf")
+ggplot(results, aes(log2FoldChange, -log10(pvalue))) +  labs(title="ROSMAP DLPFC APOE4-Positive [4 up, 2 down]") +
+geom_point(aes(col=Significance)) + scale_color_manual(values=c("goldenrod", "dodgerblue", "lightgrey")) +geom_text_repel(data=filter(results, padj<0.05 & abs(log2FoldChange) > 0.4) , aes(label=external_gene_name))
+#dev.off()
+```
+
+Heatmaps
+```{r}
+e4neg.markers<- subset(e4neg, padj < 0.05)
+e4pos.markers<- subset(e4pos, padj < 0.05)
+e4neg.markers$group<- "APOE4_negative"
+e4pos.markers$group<- "APOE4_positive"
+all_markers<- rbind(e4neg.markers,e4pos.markers)
+
+#Variable to graph by
+colnames(all_markers)
+all_markers<- all_markers[,c(7,3,10)]
+for(ct in unique(all_markers$group)){
+ new_col<- print(paste0('all_markers$',ct,'<- ifelse(all_markers$group == "',ct,'",all_markers$log2FoldChange, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+#Remove duplicates: if repeats add colsums of all repeated rows then remove duplicates
+all_markers <- all_markers %>% group_by(external_gene_name) %>% mutate(count = n())
+length(which(all_markers$count > 1)) #1618
+which(all_markers$external_gene_name == "SKI")  # 2 811
+all_markers<- all_markers %>%
+   arrange(external_gene_name)
+which(all_markers$external_gene_name ==  "SKI")  # 1237 1238
+
+all_markers<- all_markers %>%                  # Specify data frame
+  group_by(external_gene_name) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_markers[,4:5])),  # Specify column
+               list(name = sum))                        # Specify function
+
+class(all_markers) #tibble
+all_markers<- as.data.frame(all_markers)
+colnames(all_markers)[2:3]<-gsub("_name","",colnames(all_markers[2:3])) 
+
+rownames(all_markers)<- all_markers$external_gene_name
+all_markers$external_gene_name<- NULL
+colnames(all_markers)
+range(all_markers) #-0.9337316  1.5192665
+
+anno <- data.frame( APOE=  factor(colnames(all_markers)))
+rownames(anno)<- anno$APOE
+annoc<- list(APOE = c("APOE4_negative"= dittoColors()[3], "APOE4_positive"= dittoColors()[4]))
+
+#pdf("rosmap_pfc_fulldeg_heatmaps.pdf")
+paletteLength <- 50
+myColor <-  colorRampPalette(rev(brewer.pal(n = 7, name ="PuOr")))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(all_markers), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(all_markers)/paletteLength, max(all_markers), length.out=floor(paletteLength/2)))
+
+pheatmap(all_markers, angle_col= "90", angle_row= "45",fontsize_row = 12, cluster_cols = FALSE,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc ,color = myColor, breaks = myBreaks)
+
+paletteLength <- 50
+myColor <-  colorRampPalette(rev(brewer.pal(n = 7, name ="RdBu")))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(all_markers), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(all_markers)/paletteLength, max(all_markers), length.out=floor(paletteLength/2)))
+
+pheatmap(all_markers, angle_col= "90", angle_row= "45",fontsize_row = 12, cluster_cols = FALSE,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc ,color = myColor, breaks = myBreaks)
+#dev.off() 
+```
+
+Upset plot for E4neg vs E4pos
+```{r}
+e4neg.markers<- subset(e4neg, padj < 0.05 & abs(log2FoldChange) > 0.4)
+e4pos.markers<- subset(e4pos, padj < 0.05 & abs(log2FoldChange) > 0.4)
+
+
+upset.list<-list(APOE4_neg_up= e4neg.markers$external_gene_name[e4neg.markers$dir == "up"],
+                 APOE4_neg_down=  e4neg.markers$external_gene_name[e4neg.markers$dir == "down"],
+                 APOE4_pos_up=  e4pos.markers$external_gene_name[e4pos.markers$dir == "up"],
+                APOE4_pos_down= e4pos.markers$external_gene_name[e4pos.markers$dir == "down"])
+
+#c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars).
+#pdf("UpSet_ROSMAP_PFC_shared.pdf")
+upset(fromList(upset.list), sets = c("APOE4_pos_down","APOE4_pos_up", "APOE4_neg_down", "APOE4_neg_up" ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 2.25, 2.25, 2.25)) 
+grid.text("Shared ROSMAP PFC DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+#dev.off()
+```
+
+Gene Ontology
+```{r}
+library(DOSE)
+library(pathview)
+library(clusterProfiler)
+
+#Gene ontology
+e4neg_up<-e4neg.markers[e4neg.markers$dir == "up",]
+e4neg_down<- e4neg.markers[e4neg.markers$dir == "down",]
+e4pos_up<-e4pos.markers[e4pos.markers$dir == "up",]
+e4pos_down<- e4pos.markers[e4pos.markers$dir == "down",]
+
+all_ros_genes<- as.character((e4neg$ensembl_gene_id))
+e4neg_up_genes<- as.character(e4neg_up$ensembl_gene_id)
+e4neg_down_genes<- as.character(e4neg_down$ensembl_gene_id)
+e4pos_up_genes<- as.character(e4pos_up$ensembl_gene_id)
+e4pos_down_genes<- as.character(e4pos_down$ensembl_gene_id)
+
+summary(is.na(e4neg_up_genes)) 
+summary(is.na(e4pos_up_genes)) 
+summary(is.na(e4neg_down_genes)) 
+summary(is.na(e4pos_down_genes)) 
+
+e4neg_up_ego <- enrichGO(gene = e4neg_up_genes, 
+                universe = all_ros_genes,
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                pAdjustMethod = "BH", 
+                qvalueCutoff = 0.05, 
+                readable = TRUE)
+cluster_summary1 <- data.frame(e4neg_up_ego)
+
+e4neg_down_ego <- enrichGO(gene = e4neg_down_genes, 
+                universe = all_ros_genes,
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                pAdjustMethod = "BH", 
+                qvalueCutoff = 0.05, 
+                readable = TRUE)
+cluster_summary2 <- data.frame(e4neg_down_ego)
+
+e4pos_up_ego <- enrichGO(gene = e4pos_up_genes, 
+                universe = all_ros_genes,
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                pAdjustMethod = "BH", 
+                qvalueCutoff = 0.05, 
+                readable = TRUE)
+cluster_summary3 <- data.frame(e4pos_up_ego)
+
+e4pos_down_ego <- enrichGO(gene = e4pos_down_genes, 
+                universe = all_ros_genes,
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                pAdjustMethod = "BH", 
+                qvalueCutoff = 0.05, 
+                readable = TRUE)
+cluster_summary4 <- data.frame(e4pos_down_ego)
+
+#pdf("ROSMAP_PFC_GO_dotplots")
+dotplot(e4neg_up_ego, showCategory=50)
+dotplot(e4neg_down_ego, showCategory=50)
+dotplot(e4pos_up_ego, showCategory=50)
+dotplot(e4pos_down_ego, showCategory=50)
+#dev.off()
+
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+write.csv(cluster_summary1, file="ROSMAP_PFC_E4neg_ADvC_up_GO.csv")
+write.csv(cluster_summary2, file="ROSMAP_PFC_E4neg_ADvC_down_GO.csv")
+write.csv(cluster_summary3, file="ROSMAP_PFC_E4pos_ADvC_up_GO.csv")
+write.csv(cluster_summary4, file="ROSMAP_PFC_E4pos_ADvC_down_GO.csv")
+```
+
+KEGG
+```{r}
+library(org.Hs.eg.db)
+e4neg_up_genes2<- unlist(mget(e4neg_up_genes, org.Hs.egENSEMBL2EG, ifnotfound = NA))
+e4neg_down_genes2<- unlist(mget(e4neg_down_genes, org.Hs.egENSEMBL2EG, ifnotfound = NA))
+e4pos_up_genes2<- unlist(mget(e4pos_up_genes, org.Hs.egENSEMBL2EG, ifnotfound = NA))
+e4pos_down_genes2<- unlist(mget(e4pos_down_genes, org.Hs.egENSEMBL2EG, ifnotfound = NA))
+all_ros_genes2<- unlist(mget(all_ros_genes, org.Hs.egENSEMBL2EG, ifnotfound = NA))
+
+kegg_summ1<-enrichKEGG(e4neg_up_genes2, organism = "hsa", keyType = "kegg",pvalueCutoff = 0.05, pAdjustMethod = "BH", universe=all_ros_genes2,minGSSize = 10, maxGSSize = 500, qvalueCutoff = 0.2, use_internal_data = FALSE)
+kegg_summ1<- as.data.frame(kegg_summ1)
+
+kegg_summ2<-enrichKEGG(e4neg_down_genes2, organism = "hsa", keyType = "kegg",pvalueCutoff = 0.05, pAdjustMethod = "BH", universe=all_ros_genes2,minGSSize = 10, maxGSSize = 500, qvalueCutoff = 0.2, use_internal_data = FALSE)
+kegg_summ2<- as.data.frame(kegg_summ2)
+
+kegg_summ3<-enrichKEGG(e4pos_up_genes2, organism = "hsa", keyType = "kegg",pvalueCutoff = 0.05, pAdjustMethod = "BH", universe=all_ros_genes2,minGSSize = 10, maxGSSize = 500, qvalueCutoff = 0.2, use_internal_data = FALSE)
+kegg_summ3<- as.data.frame(kegg_summ3)
+
+kegg_summ4<-enrichKEGG(e4pos_down_genes2, organism = "hsa", keyType = "kegg",pvalueCutoff = 0.05, pAdjustMethod = "BH", universe=all_ros_genes2,minGSSize = 10, maxGSSize = 500, qvalueCutoff = 0.2, use_internal_data = FALSE)
+kegg_summ4<- as.data.frame(kegg_summ4)
+
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+write.csv(kegg_summ1, file="ROSMAP_PFC_E4neg_ADvC_up_KEGG.csv")
+write.csv(kegg_summ2, file="ROSMAP_PFC_E4neg_ADvC_down_KEGG.csv")
+write.csv(kegg_summ3, file="ROSMAP_PFC_E4pos_ADvC_up_KEGG.csv")
+write.csv(kegg_summ4, file="ROSMAP_PFC_E4pos_ADvC_down_KEGG.csv")
+```

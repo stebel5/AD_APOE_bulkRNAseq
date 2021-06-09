@@ -1,0 +1,295 @@
+---
+title: "Mayo_CBE_RNASeq_DE"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+
+Goal: Dimensionality reduction and differential gene expression analysis of reprocessed Mayo Cerebellum RNA-Seq Data\
+https://www.synapse.org/#!Synapse:syn8690799\
+https://www.synapse.org/#!Synapse:syn3817650 for covariates\
+
+Load datasets\
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+mayo_data4<- read.csv("Mayo_CBE_data.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mayo_meta3<- read.csv("Mayo_CBE_meta.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+
+rownames(mayo_data4)<- mayo_data4$X
+mayo_data4$X<- NULL
+
+rownames(mayo_meta3)<- mayo_meta3$X
+mayo_meta3$X<- NULL
+
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Load necessary libraries\
+```{r}
+library(DESeq2)
+library(tidyverse)
+library(DEGreport)
+library(tximport)
+library(ggplot2)
+library(ggrepel)
+library(magrittr)
+library(limma)
+```
+
+EDA on Mayo Dataset to be analyzed\
+```{r}
+table(mayo_meta3$Diagnosis) # AD 78, Control 66
+table(mayo_meta3$Sex) # F 76, M 68
+table(mayo_meta3$ApoE) #33(92),34(47), 44(5)
+table(mayo_meta3$Batch) #15 in total
+table(mayo_meta3$Age) #50s (1), 60s(12), 70s(26), 80s(73), 90s(32)
+table(mayo_meta3$ApoE[mayo_meta3$Diagnosis == "AD"]) #33(35), 34(38), 44(5)
+table(mayo_meta3$ApoE[mayo_meta3$Diagnosis != "AD"]) ##33 (57), 34 (9)
+table(mayo_meta3$Sex[mayo_meta3$Diagnosis == "AD"]) #F 45, M 33
+table(mayo_meta3$Sex[mayo_meta3$Diagnosis != "AD"]) #F 31, M 35
+```
+
+Set-Up dds object & Run DESeq2\
+```{r}
+sapply(mayo_meta3, class)
+mayo_meta3$Diagnosis %<>% factor
+mayo_meta3$Sex %<>% factor
+#Change ApoE into E4 positive and E4 negative
+mayo_meta3$ApoE2<- mayo_meta3$ApoE
+mayo_meta3$ApoE2<- ifelse(mayo_meta3$ApoE2 == "33", "E4neg", "E4pos") 
+mayo_meta3$ApoE2 %<>% factor
+mayo_meta3$Age %<>% factor
+mayo_meta3$Batch %<>% factor
+
+mayo_dds<- DESeqDataSetFromMatrix(countData= as.matrix(mayo_data4), colData= mayo_meta3, design= ~ Batch + Diagnosis + Sex + Age + ApoE2)
+mayo_dds #19679 144
+keep<- rowSums(counts(mayo_dds)) >=10  #filter genes with low counts 
+mayo_dds= mayo_dds[keep,]  #trimmed from 19679 genes to 18390 genes
+mayo_dds #18390 144 
+
+levels(mayo_dds$Diagnosis) #"AD"      "Control"
+mayo_dds$Diagnosis <-factor(mayo_dds$Diagnosis, levels = c("Control","AD") )   
+
+levels(mayo_dds$Sex) #"F" "M"
+mayo_dds$Sex <-factor(mayo_dds$Sex, levels = c("M","F") ) #make male the reference level 
+
+levels(mayo_dds$ApoE2) #"E4neg" "E4pos"
+
+levels(mayo_dds$Age) #"50s"         "60s"         "70s"         "80s"         "90s"
+
+mayo_dds<- DESeq(mayo_dds) #26 rows did not converge in beta, labelled in mcols(object)$betaConv. Use larger maxit argument with nbinomWaldTest
+
+resultsNames(mayo_dds) #lists the coeficients
+mayo_dds<- mayo_dds[which(mcols(mayo_dds)$betaConv),] #select rows that converged 18364 144 
+```
+
+QC: PCA\
+```{r}
+mayo_vsd <- vst(mayo_dds, blind=TRUE) 
+mayo_vsd_mat<- assay(mayo_vsd) 
+mayo.pca<- prcomp(t(mayo_vsd_mat), scale.=TRUE)
+mayo.pca.var<- mayo.pca$sdev^2 #square of std dev is variance
+mayo.pca.var.per<- round(mayo.pca.var/sum(mayo.pca.var)*100,1) #percentage of variance
+mayo.pca.extra<- cbind(mayo_meta3, mayo.pca$x)
+
+ 
+#pdf("mayo.cbe.pca.plots.pdf") 
+barplot(mayo.pca.var.per, main="Scree Plot Percent of Variation (Mayo CBE PCA)", xlab="Principal Component", ylab="Percent Variation", ylim=c(0,40))#plot percentage of variation
+
+ggplot(mayo.pca.extra) + geom_point(aes(x=PC1, y=PC2, color= Diagnosis)) + xlab(paste("PC1 - ",mayo.pca.var.per[1], "%", sep="")) + ylab(paste("PC2 - ",mayo.pca.var.per[2], "%", sep="")) + ggtitle("CBE PCA: Diagnosis") + scale_colour_manual(values = dittoColors()[1:2]) + theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.pca.extra) + geom_point(aes(x=PC1, y=PC2, color= ApoE2)) + xlab(paste("PC1 - ",mayo.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",mayo.pca.var.per[2], "%", sep="")) + ggtitle("CBE PCA - APOE") + scale_colour_manual(values = dittoColors()[3:4]) + theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.pca.extra) + geom_point(aes(x=PC1, y=PC2, color= Sex)) + xlab(paste("PC1 - ",mayo.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",mayo.pca.var.per[2], "%", sep="")) + ggtitle("CBE PCA: Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.pca.extra) + geom_point(aes(x=PC1, y=PC2, color= Age)) + xlab(paste("PC1 - ",mayo.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",mayo.pca.var.per[2], "%", sep="")) + ggtitle("CBE PCA: Age") + scale_colour_manual(values = dittoColors()[7:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.pca.extra) + geom_point(aes(x=PC1, y=PC2, color= Batch)) + xlab(paste("PC1 - ",mayo.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",mayo.pca.var.per[2], "%", sep="")) + ggtitle("CBE PCA:Batch") + scale_colour_manual(values = dittoColors()[12:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+No need to batch correct\
+Check for outliers by calculating z-score (value-mean)/stdev; If zcore is > 3, < -3, then the sample is an outlier\ 
+```{r}
+mayo.pca1.zcores<- mayo.pca.extra
+
+#PC1
+sd(mayo.pca1.zcores$PC1) #60.61679
+mean(mayo.pca1.zcores$PC1) #2.236497e-14
+mayo.pca1.zcores$pc1z<- (mayo.pca1.zcores$PC1 - 2.236497e-14)/60.61679
+range(mayo.pca1.zcores$pc1z) # -2.919654  1.778527-> none for PC1  
+
+#PC2
+sd(mayo.pca1.zcores$PC2) #47.86017
+mean(mayo.pca1.zcores$PC2) #1.251296e-15
+mayo.pca1.zcores$pc2z<- (mayo.pca1.zcores$PC2 -  1.251296e-15)/47.86017
+range(mayo.pca1.zcores$pc2z) #-2.479236  1.551437
+```
+
+QC: tSNE\
+```{r}
+library(caret)
+library(Rtsne)
+
+mayo_tsne<- t(mayo_data4) 
+rownames(mayo_tsne) == rownames(mayo_meta3)
+mayo_tsne2<- merge(mayo_tsne, mayo_meta3, by = "row.names")
+ 
+dim(mayo_tsne) # 144 19679
+dim(mayo_tsne2) # 143 19687
+
+set.seed(5)
+tsne_out <- Rtsne(as.matrix(mayo_tsne),pca=FALSE,perplexity=30,theta=0.0) # Run TSNE
+
+#pdf("mayo.cbe.tsne.plots.pdf") 
+tsne_plotD <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = mayo_tsne2$Diagnosis)
+ggplot(tsne_plotD) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "2D t-SNE projection stratified by Diagnosis") + theme_bw() + scale_colour_manual(values = dittoColors()[1:2]) + theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotA <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = mayo_tsne2$ApoE2)
+ggplot(tsne_plotA) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "2D t-SNE projection stratified by ApoE status") + theme_bw() + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotS <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = mayo_tsne2$Sex)
+ggplot(tsne_plotS) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "2D t-SNE projection stratified by Sex") + theme_bw() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotAge <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = mayo_tsne2$Age)
+ggplot(tsne_plotAge) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "2D t-SNE projection stratified by Age") + theme_bw() + scale_colour_manual(values = dittoColors()[7:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotBatch <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = mayo_tsne2$Batch)
+ggplot(tsne_plotBatch) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "2D t-SNE projection stratified by Batch") + theme_bw() + scale_colour_manual(values = dittoColors()[12:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+QC: UMAP\
+```{r}
+mayo_udat<- mayo_tsne
+
+set.seed(6)
+library(umap)
+mayo.umap= umap(mayo_udat)
+mayo.umap #144 items, 2 dimensions
+head(mayo.umap$layout, 3)
+
+mayo.umap2<- data.frame(mayo.umap$layout)
+colnames(mayo.umap2)[1:2]<- c("UMAP1","UMAP2")
+mayo.umap2<- merge(mayo.umap2,mayo_meta3, by= 0)
+sapply(mayo.umap2,class)
+
+#pdf("mayo.cbe.umap.plots.pdf") 
+ggplot(mayo.umap2, aes( UMAP1, UMAP2, color = Diagnosis)) + geom_point() + ggtitle("Mayo RNA-seq CBE UMAP - Diagnosis") + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.umap2, aes( UMAP1, UMAP2, color = ApoE2)) + geom_point() + ggtitle("Mayo RNA-seq CBE UMAP - ApoE2") + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.umap2, aes( UMAP1, UMAP2, color = Sex)) + geom_point() + ggtitle("Mayo RNA-seq CBE UMAP - Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.umap2, aes( UMAP1, UMAP2, color = Age)) + geom_point() + ggtitle("Mayo RNA-seq CBE UMAP - Age") + scale_colour_manual(values = dittoColors()[7:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(mayo.umap2, aes( UMAP1, UMAP2, color = Batch)) + geom_point() + ggtitle("Mayo RNA-seq CBE UMAP - Batch") + scale_colour_manual(values = dittoColors()[12:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+QC: Hierarchical Clustering\
+```{r}
+#Heatmap of the count matrix
+mayo_vsd_mat<- assay(mayo_vsd)  #get rlog matrix 
+mayo_vsd_cor<- cor(mayo_vsd_mat) #use cor base R functon to compute pairwise correlation values
+head(mayo_vsd_cor) #check output, note row and column names 
+
+annocolors<- list(Diagnosis = c("AD"= dittoColors()[1], "Control" = dittoColors()[2]), 
+             ApoE2 = c("E4neg"= dittoColors()[3], "E4pos" = dittoColors()[4]),
+             Sex= c("F"= dittoColors()[5], "M" = dittoColors()[6]),
+             Age= c("50s"= dittoColors()[7], "60s" = dittoColors()[8], "70s"= dittoColors()[9], "80s" = dittoColors()[10], "90s" = dittoColors()[11]),
+             Batch= c("FCC7983ACXX"= dittoColors()[12], "FCC79ALACXX"= dittoColors()[13], "FCC79ETACXX"= dittoColors()[14], "FCC7AFDACXX" = dittoColors()[15],"FCC7BMUACXX"= dittoColors()[16], "FCC7BR1ACXX"= dittoColors()[17], "FCC7DJAACXX"= dittoColors()[18], "FCC7DRJACXX"= dittoColors()[19], "FCC7E15ACXX"= dittoColors()[20],"FCC7KKVACXX"= dittoColors()[21],  "FCC7KRCACXX"= dittoColors()[22],  "FCC7KUNACXX"= dittoColors()[23],"FCC7L0WACXX"= dittoColors()[24], "FCC7L2YACXX"= dittoColors()[25], "FCC7LB6ACXX"= dittoColors()[26]))
+
+#pdf("mayo.cbe.clustheatmap1.pdf") 
+pheatmap(mayo_vsd_cor, annotation = mayo_meta3[,c(2,7,3,6,5)], annotation_colors = annocolors, show_rownames = F, show_colnames = F, fontsize = 5)
+pheatmap(mayo_vsd_cor, annotation = mayo_meta3[,c(2,7,3,6,5)], annotation_colors = annocolors, show_rownames = T, show_colnames = T, fontsize = 5, angle_col = "45") 
+#dev.off()
+
+#Heatmap of sample-to-sample distances
+mayo_sampleDists<- dist(t(assay(mayo_vsd))) 
+library("RColorBrewer")
+mayo_sampleDistMatrix <- as.matrix(mayo_sampleDists)
+rownames(mayo_sampleDistMatrix) <- paste(mayo_vsd$Diagnosis, mayo_vsd$ApoE2, sep="-") 
+colnames(mayo_sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+#pdf("mayo.cbe.clustheatmap2.pdf") 
+pheatmap(mayo_sampleDistMatrix, 
+         clustering_distance_rows=mayo_sampleDists,
+         clustering_distance_cols=mayo_sampleDists, 
+         col=colors,show_rownames = F) 
+ 
+logcounts<- log2(counts(mayo_dds, normalized= TRUE) + 1)
+plot(hclust(dist(t(logcounts))), labels=colnames((mayo_dds)))
+#dev.off()
+```
+
+After checking the annotated clustering map it was clear that it was not necessary to remove X11289_TCX as it was not too dissimilar from other samples.\
+
+Save dds object\
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+saveRDS(mayo_dds, "mayo_cbe_dds.rds") 
+```
+
+Differential Expression Analysis:\ 
+Up and Downregulated (Fold Change +/- 1.3 or 0.4 log FC, padj < 0.05)\
+To help compare several combinations of levels https://www.biostars.org/p/325009/\
+Stratify by ApoE4, then run case vs control DE analysis\
+ApoE33/E4neg AD vs Control\
+```{r}
+mayo_dds_neg<- mayo_dds[,mayo_dds$ApoE2 =="E4neg"] #Has 92  samples ; dim: 18508 92
+
+res_dneg <- results(mayo_dds_neg, contrast=c("Diagnosis", "AD", "Control"), independentFiltering=TRUE, alpha=0.05, pAdjustMethod="BH", parallel=TRUE) 
+summary(res_dneg) 
+plotMA(res_dneg, ylim=c(-2,2))
+ 
+library(apeglm) 
+res_dneg_lfc <- lfcShrink(mayo_dds_neg, coef="Diagnosis_AD_vs_Control", type="apeglm", res=res_dneg)
+summary(res_dneg_lfc) 
+plotMA(res_dneg_lfc, ylim=c(-2,2))
+
+#Make dataset without cutoff:
+res_dneg_tb <- res_dneg_lfc %>%
+  data.frame() %>%
+  rownames_to_column(var="ensembl_gene_id") %>% 
+  as_tibble() 
+
+summary(is.na(res_dneg_tb))
+res_dneg_tb<- dplyr::inner_join(res_dneg_tb, ProteinCodingGenes[,c(2:4)], by ="ensembl_gene_id")
+
+res_dneg_tb <- res_dneg_tb %>%
+  mutate(dir= ifelse(res_dneg_tb$log2FoldChange < 0, "down", "up"))
+
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+write.csv(res_dneg_tb, file="mayo_cbe_E4neg_ADvC.csv")
+```
+
+ApoE34 & ApoE44/E4pos AD vs Control
+```{r}
+mayo_dds_pos<- mayo_dds[,mayo_dds$ApoE2 =="E4pos"] #Has 51  samples ; dim: 18508 51 
+
+res_dpos <- results(mayo_dds_pos, contrast=c("Diagnosis", "AD", "Control"), independentFiltering=TRUE, alpha=0.05, pAdjustMethod="BH", parallel=TRUE) 
+summary(res_dpos) 
+plotMA(res_dpos, ylim=c(-2,2))
+
+library(apeglm) 
+res_dpos_lfc <- lfcShrink(mayo_dds_pos, coef="Diagnosis_AD_vs_Control", type="apeglm", res=res_dpos)
+summary(res_dpos_lfc) 
+plotMA(res_dpos_lfc, ylim=c(-2,2))
+
+#Make dataset without cutoff:
+res_dpos_tb <- res_dpos_lfc %>%
+  data.frame() %>%
+  rownames_to_column(var="ensembl_gene_id") %>% 
+  as_tibble() 
+
+summary(is.na(res_dpos_tb))
+res_dpos_tb<- dplyr::inner_join(res_dpos_tb, ProteinCodingGenes[,c(2:4)], by ="ensembl_gene_id")
+
+res_dpos_tb <- res_dpos_tb %>%
+  mutate(dir= ifelse(res_dpos_tb$log2FoldChange < 0, "down", "up"))
+
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+write.csv(res_dpos_tb, file="mayo_cbe_E4pos_ADvC.csv")
+```

@@ -1,0 +1,127 @@
+---
+title: "Mayo_TCX_RNASeq_SETUP"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+Goal: Select APOE 33, 34, and 44 samples and corresponding meta and count data from reprocessed Mayo Temporal Lobe RNA-Seq Data\
+https://www.synapse.org/#!Synapse:syn8690799 \
+https://www.synapse.org/#!Synapse:syn3817650 for covariates \
+
+Load datasets
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_TCX")
+mayo_covar<- read.csv("MayoRNAseq_RNAseq_TCX_covariates.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mayo_data<- read.table("Mayo_TCX_all_counts_matrix.txt.gz",header= TRUE, sep = "\t", stringsAsFactors=FALSE)
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Load necessary libraries
+```{r}
+library(DESeq2) 
+library(tidyverse)
+library(tximport)
+library(ggrepel)
+library(magrittr)
+library(dplyr)
+```
+
+Format metadata: Select AD & Conrol, Remove ApopE 22, 23, 24
+```{r}
+#Remove rows with missing values
+length(unique(mayo_covar$ID)) #278
+mayo_covar$ID[is.na(mayo_covar$Source)] #"1925_TCX" "844_TCX"  "132_TCX"  "1950_TCX" have missing data
+mayo_covar2<- mayo_covar[!(is.na(mayo_covar$Tissue)),]
+
+#Check RIN/ quality
+range(mayo_covar2$RIN) #all above 5, all good
+
+#Select for AD and Controls
+length(unique(mayo_covar2$Diagnosis)) #4
+unique(mayo_covar2$Diagnosis) #[1] "PSP"              "AD"               "Control"                      "Pathologic Aging"
+table(mayo_covar2$Diagnosis) #82AD, 78 Control, 30 Pathological aging, 84 PSP
+mayo_covar3<- mayo_covar2[mayo_covar2$Diagnosis == "AD" | mayo_covar2$Diagnosis == "Control",]
+
+#Add "X" to make metaID names match dataID names
+mayo_covar3$ID<- paste0("X", mayo_covar3$ID)
+
+#Remove ApoE 22, 23, 24
+table(mayo_covar3$ApoE)#16X 23, 1X 24, 92X 33, 44X 34, 7*44
+class(mayo_covar3$ApoE)
+mayo_covar4<- mayo_covar3[mayo_covar3$ApoE == "33"|mayo_covar3$ApoE == "34"|mayo_covar3$ApoE == "44" ,]
+table(mayo_covar4$Diagnosis)
+table(mayo_covar4$ApoE)
+
+#Pick columns needed for analysis
+colnames(mayo_covar4)
+mayo_meta<- mayo_covar4[,c(1,5:9)]  #add 9 for flowcell
+colnames(mayo_meta)[c(3,6)]<-c("Sex","Batch")
+
+#Fix Age and make in decades 50s, 60s,70s,80s,90s
+range(mayo_meta$AgeAtDeath)
+unique(mayo_meta$AgeAtDeath)
+class(mayo_meta$AgeAtDeath)
+mayo_meta2<- mayo_meta
+
+mayo_meta2$Age<- as.numeric(mayo_meta2$AgeAtDeath)
+mayo_meta2<- mayo_meta2 %>%
+  mutate(Age= ifelse(AgeAtDeath >= 50 & AgeAtDeath <= 59,"50s", Age)) %>%
+  mutate(Age= ifelse(AgeAtDeath >= 60 &AgeAtDeath <= 69,"60s", Age)) %>%
+  mutate(Age= ifelse(AgeAtDeath >= 70 & AgeAtDeath <= 79,"70s", Age)) %>%
+  mutate(Age= ifelse(AgeAtDeath >= 80 & AgeAtDeath <= 89,"80s", Age)) %>%
+  mutate(Age= ifelse(AgeAtDeath == "90_or_above","90s", Age)) 
+  
+unique(mayo_meta2$Age)
+mayo_meta2$Age %<>% factor
+rownames(mayo_meta2)<- mayo_meta2$ID
+mayo_meta2$AgeAtDeath<- NULL
+mayo_meta2$ID<- NULL
+```
+
+Format count data: Select protein coding genes & Select samples present in metadata
+```{r}
+#Select protein coding genes
+mayo_data2<- mayo_data[-c(1:4),]
+
+class(mayo_data2$feature) #character
+mayo_data2$feature<-gsub("\\..*","",mayo_data2$feature) #remove numbers/characters after "." to match ensembl gene ids from biomart
+length(unique((mayo_data2$feature))) #60275 genes
+
+rownames(mayo_data2)<- mayo_data2$feature
+sum(rownames(mayo_data2) %in% ProteinCodingGenes$ensembl_gene_id) #count number of protein coding genes 19679/60275
+mayo_data3<- mayo_data2[mayo_data2$feature %in% ProteinCodingGenes$ensembl_gene_id,] #select only protein coding genes
+ 
+#Select samples in final meta table
+mayo_data4<- mayo_data3[,c(colnames(mayo_data3) %in% rownames(mayo_meta2))]
+```
+
+Match order of meta and count sample names
+```{r}
+summary(rownames(mayo_meta2) %in% colnames(mayo_data4)) #143 TRUE
+summary(rownames(mayo_meta2) == colnames(mayo_data4)) #141 FALSE, 2 TRUE
+
+match(colnames(mayo_data4),rownames(mayo_meta2)) #returns the position of the matches (indices) with respect to the second vector
+mayo_idx<- match(colnames(mayo_data4),rownames(mayo_meta2))
+mayo_meta3<- mayo_meta2[mayo_idx,] #rearrange rows
+summary(rownames(mayo_meta3) == colnames(mayo_data4)) # 143 TRUE
+
+#Save subsetted dataframes  
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_TCX")
+write.csv(mayo_data4, file="Mayo_TCX_data.csv")
+write.csv(mayo_meta3, file="Mayo_TCX_meta.csv")
+```
+
+Exploratory Data Analysis on Mayo Dataset to be analyzed
+```{r}
+table(mayo_meta3$Diagnosis) # AD 78, Control 65
+table(mayo_meta3$Sex) # F 78, M 65
+table(mayo_meta3$ApoE) #33(92),34(44), 44(7)
+table(mayo_meta3$Batch) #15 in total
+table(mayo_meta3$Age) #50s (2), 60s(12), 70s(25), 80s(70), 90plus(34)
+table(mayo_meta3$ApoE[mayo_meta3$Diagnosis == "AD"]) #33(35), 34(36), 44(7)
+table(mayo_meta3$ApoE[mayo_meta3$Diagnosis != "AD"]) #33 (57), 34 (8) there are no control 44s
+table(mayo_meta3$Sex[mayo_meta3$Diagnosis == "AD"]) #F 47, M 31
+table(mayo_meta3$Sex[mayo_meta3$Diagnosis != "AD"]) #F 31, M 34
+table(mayo_meta3$Sex[mayo_meta3$Diagnosis == "AD"], mayo_meta3$ApoE[mayo_meta3$Diagnosis == "AD"] ) 
+table(mayo_meta3$Sex[mayo_meta3$Diagnosis != "AD"], mayo_meta3$ApoE[mayo_meta3$Diagnosis != "AD"] ) 
+```

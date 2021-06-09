@@ -1,0 +1,606 @@
+---
+title: "ROSMAP_DLPFC_RNASeq_DE"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+
+Goal: Dimensionality reduction and differential gene expression analysis of reprocessed ROSMAP PFC RNA-Seq Data\
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load datasets\
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+rosmap_data4<- read.csv("ROSMAP_dds_data.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rosmap_meta4<- read.csv("ROSMAP_dds_meta.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+
+rownames(rosmap_data4)<- rosmap_data4$X
+rosmap_data4$X<- NULL
+
+rownames(rosmap_meta4)<- rosmap_meta4$X
+rosmap_meta4$X<- NULL
+
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Load necessary libraries\
+```{r}
+library(DESeq2) 
+library(tidyverse)
+library(tximport)
+library(ggrepel)
+library(magrittr)
+library(dplyr)
+```
+
+Set-Up dds object & Run DESeq\
+```{r}
+colnames(rosmap_meta4)
+sapply(rosmap_meta4, class) 
+rosmap_meta4$Diagnosis %<>% factor
+rosmap_meta4$Study %<>% factor
+rosmap_meta4$Sex %<>% factor 
+rosmap_meta4$Race %<>% factor
+rosmap_meta4$ApoE %<>% factor
+rosmap_meta4$ApoE2<- ifelse(rosmap_meta4$ApoE == "33", "E4neg", "E4pos") 
+rosmap_meta4$ApoE2 %<>% factor
+rosmap_meta4$Age %<>% factor
+rosmap_meta4$Spanish %<>% factor
+rosmap_meta4$Batch %<>% factor
+sapply(rosmap_meta4, class) 
+
+#match design to that of mayo's Batch + Diagnosis + Sex + Age + ApoE2 (do not include Study, Race, Spanish)
+ros_dds<- DESeqDataSetFromMatrix(countData= as.matrix(rosmap_data4), colData= rosmap_meta4,design= ~ Batch + Diagnosis + Sex + Age + ApoE2 )
+
+ros_dds #19679 214 
+keep<- rowSums(counts(ros_dds)) >=10  #filter genes with low counts 
+ros_dds= ros_dds[keep,]  #trimmed from 19679 genes to 18676 genes
+ros_dds
+
+levels(ros_dds$Diagnosis) #"AD"      "Control"
+ros_dds$Diagnosis <-factor(ros_dds$Diagnosis, levels = c("Control","AD") )   
+
+levels(ros_dds$Age) #70s, 80s, 90s
+
+levels(ros_dds$Batch) # 0-8
+
+levels(ros_dds$ApoE2) #"E4neg" "E4pos"
+
+levels(ros_dds$Sex)
+ros_dds$Sex<-factor(ros_dds$Sex, levels = c("Male","Female"))#make male the reference level   
+
+ros_dds<- DESeq(ros_dds)  
+
+resultsNames(ros_dds) #lists the coeficients
+#ros_dds<- ros_dds[which(mcols(ros_dds)$betaConv),] #4 rows did not converge
+```
+
+#QC pre-batch correction\ 
+QC: PCA\
+```{r}
+ros_vsd <- vst(ros_dds, blind=TRUE)  
+ros_vsd_mat<- assay(ros_vsd) 
+ros.pca<- prcomp(t(ros_vsd_mat), scale.=TRUE)
+ros.pca.var<- ros.pca$sdev^2 #square of std dev is variance
+ros.pca.var.per<- round(ros.pca.var/sum(ros.pca.var)*100,1) #percentage of variance
+ros_pca_extra<- cbind(rosmap_meta4, ros.pca$x)
+
+#pdf("rosmap.pca.plots1_bigger.pdf") 
+barplot(ros.pca.var.per, main="Scree Plot_ Percent of Variation (ROSMAP DLPFC PCA)",xlab="Principal Component", ylab="Percent Variation", ylim=c(0,40))#plot percentage of variation
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Diagnosis)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) + ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Diagnosis")  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= ApoE2)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: APOE")  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Sex)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Age)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Age") + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Batch)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Batch") + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Study)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Study")  + scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Race)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Race") + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Spanish)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Spanish") + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+#dev.off()
+#Slight batch effect!!
+```
+
+QC: tSNE\
+```{r}
+library(caret)
+library(Rtsne) 
+
+ros_tsne<- t(rosmap_data4)
+rownames(ros_tsne) == rownames(rosmap_meta4)
+ros_tsne2<- merge(ros_tsne, rosmap_meta4, by = "row.names")
+dim(ros_tsne) # 214 19679
+
+set.seed(5)
+tsne_out <- Rtsne(as.matrix(ros_tsne),pca=FALSE,perplexity=30,theta=0.0) # Run TSNE
+
+#pdf("rosmap.tsne.plots1.pdf") 
+tsne_plotD <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Diagnosis)
+ggplot(tsne_plotD) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Diagnosis") + theme_bw()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotA <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$ApoE2)
+ggplot(tsne_plotA) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by ApoE status") + theme_bw()  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotG <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Sex)
+ggplot(tsne_plotG) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Sex") + theme_bw() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotAg <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Age)
+ggplot(tsne_plotAg) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Age") + theme_bw()  + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotB <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Batch)
+ggplot(tsne_plotB) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Batch") + theme_bw() + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotSt <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Study)
+ggplot(tsne_plotSt) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Study") + theme_bw()+ scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotR <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Race)
+ggplot(tsne_plotR) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Race") + theme_bw() + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotS <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Spanish)
+ggplot(tsne_plotS) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Spanish Background") + theme_bw() + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+#dev.off()
+```
+
+QC: UMAP\
+```{r}
+ros_udat<- ros_tsne
+ 
+set.seed(6)
+library(umap)
+ros.umap= umap(ros_udat)
+ros.umap #214 items, 2 dimensions
+head(ros.umap$layout, 3) 
+
+ros.umap2<- data.frame(ros.umap$layout)
+colnames(ros.umap2)[1:2]<- c("UMAP1","UMAP2")
+ros.umap2<- merge(ros.umap2,rosmap_meta4, by= 0) 
+sapply(ros.umap2,class)
+
+#pdf("rosmap.umap.plots1.pdf") 
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Diagnosis)) + geom_point()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = ApoE2)) + geom_point() + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Sex)) + geom_point() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Age)) + geom_point() + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Batch)) + geom_point() + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Study)) + geom_point() + scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Race)) + geom_point() + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Spanish)) + geom_point() + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off() 
+```
+
+QC: Hierarchical Clustering: samples x samples\
+```{r}
+library(pheatmap)
+#ros_vsd_mat<- assay(ros_vsd)  #get rlog matrix 
+ros_vsd_cor<- cor(ros_vsd_mat) #use cor base R functon to compute pairwise correlation values
+head(ros_vsd_cor) #check output, note row and column names
+
+annocolors<- list(Diagnosis = c("AD"= dittoColors()[1], "Control" = dittoColors()[2]), 
+             ApoE2 = c("E4neg"= dittoColors()[3], "E4pos" = dittoColors()[4]),
+             Sex= c("Female"= dittoColors()[5], "Male" = dittoColors()[6]),
+             Age= c("70s"= dittoColors()[9], "80s" = dittoColors()[10], "90s" = dittoColors()[11]),
+             Batch= c("0"= dittoColors()[12], "1"= dittoColors()[13], "2"= dittoColors()[14], "3" = dittoColors()[15],"4"= dittoColors()[16], "5"= dittoColors()[17], "6"= dittoColors()[18], "7"= dittoColors()[19], "8"= dittoColors()[20]))
+
+colnames(rosmap_meta4)
+#pdf("rosmap.pfc.clustheatmap1.pdf") 
+pheatmap(ros_vsd_cor, annotation = rosmap_meta4[,c(1,9,7,8,3)], annotation_colors = annocolors, show_rownames = F, show_colnames = F, fontsize = 5)
+pheatmap(ros_vsd_cor, annotation = rosmap_meta4[,c(1,9,7,8,3)], annotation_colors = annocolors, show_rownames = T, show_colnames = T, fontsize = 5, angle_col = "45") 
+logcounts<- log2(counts(ros_dds, normalized= TRUE) + 1)
+plot(hclust(dist(t(logcounts))), labels=colnames((ros_dds)))
+#dev.off()
+```
+
+#QC post batch correction\
+Correct batch effect and rerun all plots to confirm\
+```{r}
+library(limma)
+rosmap_data4bc <- limma::removeBatchEffect(rosmap_data4, rosmap_meta4$Batch)
+assay(ros_vsd) <- limma::removeBatchEffect(assay(ros_vsd), ros_vsd$Batch)
+```
+
+Re-plot pca\
+```{r}
+ros_vsd_mat<- assay(ros_vsd) 
+ros.pca<- prcomp(t(ros_vsd_mat), scale.=TRUE)
+ros.pca.var<- ros.pca$sdev^2 #square of std dev is variance
+ros.pca.var.per<- round(ros.pca.var/sum(ros.pca.var)*100,1) #percentage of variance
+ros_pca_extra<- cbind(rosmap_meta4, ros.pca$x)
+
+#pdf("rosmap.pca.plots2_bigger.pdf") 
+barplot(ros.pca.var.per, main="Scree Plot_ Percent of Variation (ROSMAP DLPFC PCA)",xlab="Principal Component", ylab="Percent Variation", ylim=c(0,40))#plot percentage of variation
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Diagnosis)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) + ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Diagnosis")  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= ApoE2)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: APOE")  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Sex)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Age)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Age") + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Batch)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Batch") + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Study)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Study")  + scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Race)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Race") + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Spanish)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Spanish") + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+Re-plot tSNE\
+```{r}
+library(caret)
+library(Rtsne) 
+
+ros_tsne<- t(rosmap_data4bc)
+rownames(ros_tsne) == rownames(rosmap_meta4)
+ros_tsne2<- merge(ros_tsne, rosmap_meta4, by = "row.names")
+dim(ros_tsne) # 214 19679
+
+set.seed(5)
+tsne_out <- Rtsne(as.matrix(ros_tsne),pca=FALSE,perplexity=30,theta=0.0) # Run TSNE
+
+#pdf("rosmap.tsne.plots2.pdf") 
+tsne_plotD <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Diagnosis)
+ggplot(tsne_plotD) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Diagnosis") + theme_bw()  + scale_colour_manual(values = dittoColors()[1:2])
+
+tsne_plotA <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$ApoE2)
+ggplot(tsne_plotA) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by ApoE status") + theme_bw()  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotG <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Sex)
+ggplot(tsne_plotG) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Sex") + theme_bw() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotAg <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Age)
+ggplot(tsne_plotAg) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Age") + theme_bw()  + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotB <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Batch)
+ggplot(tsne_plotB) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Batch") + theme_bw() + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotSt <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Study)
+ggplot(tsne_plotSt) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Study") + theme_bw()+ scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotR <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Race)
+ggplot(tsne_plotR) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Race") + theme_bw() + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotS <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Spanish)
+ggplot(tsne_plotS) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Spanish Background") + theme_bw() + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+Re-plot UMAP\
+```{r}
+ros_udat<- ros_tsne
+ 
+set.seed(6)
+library(umap)
+ros.umap= umap(ros_udat)
+ros.umap #214 items, 2 dimensions
+head(ros.umap$layout, 3) 
+
+ros.umap2<- data.frame(ros.umap$layout)
+colnames(ros.umap2)[1:2]<- c("UMAP1","UMAP2")
+ros.umap2<- merge(ros.umap2,rosmap_meta4, by= 0) 
+sapply(ros.umap2,class)
+
+#pdf("rosmap.umap.plots2.pdf") 
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Diagnosis)) + geom_point()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = ApoE2)) + geom_point() + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Sex)) + geom_point() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Age)) + geom_point() + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Batch)) + geom_point() + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Study)) + geom_point() + scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Race)) + geom_point() + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Spanish)) + geom_point() + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off() 
+```
+
+Re-plot clust\
+```{r}
+library(pheatmap)
+#ros_vsd_mat<- assay(ros_vsd)  #get rlog matrix 
+ros_vsd_cor<- cor(ros_vsd_mat) #use cor base R functon to compute pairwise correlation values
+head(ros_vsd_cor) #check output, note row and column names
+
+annocolors<- list(Diagnosis = c("AD"= dittoColors()[1], "Control" = dittoColors()[2]), 
+             ApoE2 = c("E4neg"= dittoColors()[3], "E4pos" = dittoColors()[4]),
+             Sex= c("Female"= dittoColors()[5], "Male" = dittoColors()[6]),
+             Age= c("70s"= dittoColors()[9], "80s" = dittoColors()[10], "90s" = dittoColors()[11]),
+             Batch= c("0"= dittoColors()[12], "1"= dittoColors()[13], "2"= dittoColors()[14], "3" = dittoColors()[15],"4"= dittoColors()[16], "5"= dittoColors()[17], "6"= dittoColors()[18], "7"= dittoColors()[19], "8"= dittoColors()[20]))
+
+colnames(rosmap_meta4)
+#pdf("rosmap.pfc.clustheatmap2.pdf") 
+pheatmap(ros_vsd_cor, annotation = rosmap_meta4[,c(1,9,7,8,3)], annotation_colors = annocolors, show_rownames = F, show_colnames = F, fontsize = 5)
+pheatmap(ros_vsd_cor, annotation = rosmap_meta4[,c(1,9,7,8,3)], annotation_colors = annocolors, show_rownames = T, show_colnames = T, fontsize = 5, angle_col = "45") 
+logcounts<- log2(counts(ros_dds, normalized= TRUE) + 1)
+plot(hclust(dist(t(logcounts))), labels=colnames((ros_dds)))
+#dev.off()
+```
+
+#QC post batch correction and outlier removal\
+
+Find outliers\
+```{r}
+find_pca_outliers<-function(arg1, arg2, arg3){ 
+  #arg1= data source, arg2= PC number, arg3= zscore
+  print(paste(arg1,".pca12.zcores<- ",arg1,"_pca_extra",sep=""),quote=FALSE)
+  print(paste("sd_pc",arg2,"<-sd(",arg1,".pca12.zcores$PC",arg2,")" ,sep=""),quote=FALSE) #sd
+  print(paste("mean_pc",arg2,"<-mean(",arg1,".pca12.zcores$PC",arg2,")", sep=""),quote=FALSE)#mean
+  print(paste(arg1,".pca12.zcores$pc",arg2,"z<- (",arg1,".pca12.zcores$PC",arg2," - mean_pc",arg2,")/sd_pc",arg2,sep=""),quote=FALSE)
+  print(paste("range(",arg1,".pca12.zcores$pc",arg2,"z)",sep=""),quote=FALSE)
+  print(paste("rownames(",arg1,".pca12.zcores)[",arg1,".pca12.zcores$pc",arg2,"z >=",arg3," ]",sep=""),quote=FALSE)
+}
+eval(expr = parse(text = find_pca_outliers("ros",1,2))) #-> none
+
+#Range of PC1 z-score:  -2.083760  2.463905
+ros.pca12.zcores<- ros_pca_extra
+sd_pc1<-sd(ros.pca12.zcores$PC1)
+mean_pc1<-mean(ros.pca12.zcores$PC1)
+ros.pca12.zcores$pc1z<- (ros.pca12.zcores$PC1 - mean_pc1)/sd_pc1
+range(ros.pca12.zcores$pc1z) #-2.827107  3.405808
+rownames(ros.pca12.zcores)[ros.pca12.zcores$pc1z >=3 ] #"X584_120522"
+ros.pca12.zcores$PC1[ros.pca12.zcores$pc1z >= 3] #202.933
+ros.pca12.zcores$PC2[ros.pca12.zcores$pc1z >= 3] #64.20716 -> after running PC2
+
+eval(expr = parse(text = find_pca_outliers("ros",2,3)))
+ros.pca12.zcores<- ros_pca_extra
+sd_pc2<-sd(ros.pca12.zcores$PC2)
+mean_pc2<-mean(ros.pca12.zcores$PC2)
+ros.pca12.zcores$pc2z<- (ros.pca12.zcores$PC2 - mean_pc2)/sd_pc2
+range(ros.pca12.zcores$pc2z) #-6.049572  2.060253 
+rownames(ros.pca12.zcores)[ros.pca12.zcores$pc2z <=-3 ] #"X367_120502" "X500_120515" ; scores are -6.049572 -4.096752 -> these are also both the top and leftmost samples in hclust
+ros.pca12.zcores$PC1[ros.pca12.zcores$pc2z <= -3] #-65.51798 -168.45147
+ros.pca12.zcores$PC2[ros.pca12.zcores$pc2z <= -3] #-274.5055 -185.8943
+
+ros_pca_extra[rownames(ros_pca_extra) == "X500_120515",c(1:9)]
+ros_pca_extra[rownames(ros_pca_extra) == "X367_120502",c(1:9)]
+ros_pca_extra[rownames(ros_pca_extra) == "X584_120522",c(1:9)]
+
+#Overall summary of outliers
+rownames(ros.pca12.zcores)[ros.pca12.zcores$pc1z >=3 | ros.pca12.zcores$pc1z <=-3 ] # "X584_120522"
+rownames(ros.pca12.zcores)[ros.pca12.zcores$pc2z >=3 | ros.pca12.zcores$pc2z <=-3 ] # "X367_120502" "X500_120515"
+```
+
+Remove outliers; make new meta and data; (re-run deseq)\ 
+```{r}
+old_ros_dds<- ros_dds #batch corrected; pre-outlier
+
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+saveRDS(old_ros_dds, "old_ros_dds.rds")
+
+ros_out<- rownames(ros.pca12.zcores)[ros.pca12.zcores$pc1z >= 3 | ros.pca12.zcores$pc2z <= -3 ]
+grep(ros_out[1], colnames(ros_dds)) #66
+grep(ros_out[2], colnames(ros_dds)) #105
+grep(ros_out[3], colnames(ros_dds)) #135
+
+ros_dds <- ros_dds[,-c(66,105,135)]
+rosmap_data5<- rosmap_data4[, -c(66,105,135)]
+ros_out %in% colnames(rosmap_data4) 
+ros_out %in% colnames(rosmap_data5) 
+
+rosmap_data4bc2<- rosmap_data4bc[, -c(66,105,135)]
+ros_out %in% colnames(rosmap_data4bc) 
+ros_out %in% colnames(rosmap_data4bc2) 
+
+rosmap_meta5<- rosmap_meta4[-c(66,105,135),]
+ros_out %in% rownames(rosmap_meta4) 
+ros_out %in% rownames(rosmap_meta5) 
+```
+
+Re-plot pca\
+```{r}
+ros_vsd <- vst(ros_dds, blind=TRUE)
+assay(ros_vsd) <- limma::removeBatchEffect(assay(ros_vsd), ros_vsd$Batch)
+ros_vsd_mat<- assay(ros_vsd) 
+ros.pca<- prcomp(t(ros_vsd_mat), scale.=TRUE)
+ros.pca.var<- ros.pca$sdev^2 #square of std dev is variance
+ros.pca.var.per<- round(ros.pca.var/sum(ros.pca.var)*100,1) #percentage of variance
+ros_pca_extra<- cbind(rosmap_meta5, ros.pca$x)
+
+#pdf("rosmap.pca.plots3_bigger.pdf") 
+barplot(ros.pca.var.per, main="Scree Plot_ Percent of Variation (ROSMAP DLPFC PCA)",xlab="Principal Component", ylab="Percent Variation", ylim=c(0,40))#plot percentage of variation
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Diagnosis)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) + ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Diagnosis")  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= ApoE2)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: APOE")  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Sex)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Age)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Age") + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Batch)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Batch") + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Study)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Study")  + scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Race)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Race") + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Spanish)) + xlab(paste("PC1 - ",ros.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",ros.pca.var.per[2], "%", sep="")) + ggtitle("DLPFC PCA: Spanish") + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+Re-plot tSNE\
+```{r}
+library(caret)
+library(Rtsne) 
+
+ros_tsne<- t(rosmap_data4bc2)
+rownames(ros_tsne) == rownames(rosmap_meta5)
+ros_tsne2<- merge(ros_tsne, rosmap_meta5, by = "row.names")
+dim(ros_tsne) # 211 19679
+
+set.seed(5)
+tsne_out <- Rtsne(as.matrix(ros_tsne),pca=FALSE,perplexity=30,theta=0.0) # Run TSNE
+
+#pdf("rosmap.tsne.plots3.pdf") 
+tsne_plotD <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Diagnosis)
+ggplot(tsne_plotD) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Diagnosis") + theme_bw()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotA <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$ApoE2)
+ggplot(tsne_plotA) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by ApoE status") + theme_bw()  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotG <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Sex)
+ggplot(tsne_plotG) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Sex") + theme_bw() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotAg <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Age)
+ggplot(tsne_plotAg) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Age") + theme_bw()  + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotB <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Batch)
+ggplot(tsne_plotB) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Batch") + theme_bw() + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotSt <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Study)
+ggplot(tsne_plotSt) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Study") + theme_bw()+ scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotR <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Race)
+ggplot(tsne_plotR) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Race") + theme_bw() + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotS <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = ros_tsne2$Spanish)
+ggplot(tsne_plotS) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "ROSMAP 2D t-SNE projection stratified by Spanish Background") + theme_bw() + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+Re-plot UMAP\
+```{r}
+ros_udat<- ros_tsne
+set.seed(6)
+library(umap)
+ros.umap= umap(ros_udat)
+ros.umap #211 items, 2 dimensions
+head(ros.umap$layout, 3) 
+
+ros.umap2<- data.frame(ros.umap$layout)
+colnames(ros.umap2)[1:2]<- c("UMAP1","UMAP2")
+ros.umap2<- merge(ros.umap2,rosmap_meta5, by= 0) 
+sapply(ros.umap2,class)
+
+#pdf("rosmap.umap.plots3.pdf") 
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Diagnosis)) + geom_point()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = ApoE2)) + geom_point() + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Sex)) + geom_point() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Age)) + geom_point() + scale_colour_manual(values = dittoColors()[9:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Batch)) + geom_point() + scale_colour_manual(values = dittoColors()[12:20])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Study)) + geom_point() + scale_colour_manual(values = dittoColors()[21:22])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Race)) + geom_point() + scale_colour_manual(values = dittoColors()[23:24])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(ros.umap2, aes( UMAP1, UMAP2, color = Spanish)) + geom_point() + scale_colour_manual(values = dittoColors()[25:26])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off() 
+```
+
+Re-plot clust\
+```{r}
+library(pheatmap)
+#ros_vsd_mat<- assay(ros_vsd)  #get rlog matrix 
+ros_vsd_cor<- cor(ros_vsd_mat) #use cor base R functon to compute pairwise correlation values
+head(ros_vsd_cor) #check output, note row and column names
+
+annocolors<- list(Diagnosis = c("AD"= dittoColors()[1], "Control" = dittoColors()[2]), 
+             ApoE2 = c("E4neg"= dittoColors()[3], "E4pos" = dittoColors()[4]),
+             Sex= c("Female"= dittoColors()[5], "Male" = dittoColors()[6]),
+             Age= c("70s"= dittoColors()[9], "80s" = dittoColors()[10], "90s" = dittoColors()[11]),
+             Batch= c("0"= dittoColors()[12], "1"= dittoColors()[13], "2"= dittoColors()[14], "3" = dittoColors()[15],"4"= dittoColors()[16], "5"= dittoColors()[17], "6"= dittoColors()[18], "7"= dittoColors()[19], "8"= dittoColors()[20]))
+
+colnames(rosmap_meta4)
+#pdf("rosmap.pfc.clustheatmap3.pdf") 
+pheatmap(ros_vsd_cor, annotation = rosmap_meta5[,c(1,9,7,8,3)], annotation_colors = annocolors, show_rownames = F, show_colnames = F, fontsize = 5)
+pheatmap(ros_vsd_cor, annotation = rosmap_meta5[,c(1,9,7,8,3)], annotation_colors = annocolors, show_rownames = T, show_colnames = T, fontsize = 5, angle_col = "45") 
+logcounts<- log2(counts(ros_dds, normalized= TRUE) + 1)
+plot(hclust(dist(t(logcounts))), labels=colnames((ros_dds)))
+#dev.off()
+```
+
+Save dds object\
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+saveRDS(ros_dds, "ros_dds.rds")
+```
+
+#DE: Up and Downregulated (FC +/- 1.2, padj 0.05)\
+Differential Expression Analysis:\
+Up and Downregulated (Fold Change +/- 1.3 or 0.4 log FC, padj < 0.05)\
+To help compare several combinations of levels https://www.biostars.org/p/325009/\
+Stratify by ApoE4, then run case vs control DE analysis\
+ApoE33/E4neg AD vs Control\
+```{r}
+ros_dds_neg<- ros_dds[,ros_dds$ApoE2 =="E4neg"] #Has 143  samples ; dim: 18676 143
+
+res_dneg <- results(ros_dds_neg, contrast=c("Diagnosis", "AD", "Control"), independentFiltering=TRUE, alpha=0.05, pAdjustMethod="BH", parallel=TRUE) 
+summary(res_dneg) 
+plotMA(res_dneg, ylim=c(-2,2))
+
+library(apeglm) 
+res_dneg_lfc <- lfcShrink(ros_dds_neg, coef="Diagnosis_AD_vs_Control", type="apeglm", res=res_dneg)
+summary(res_dneg_lfc) 
+plotMA(res_dneg_lfc, ylim=c(-2,2))
+
+#Make dataset without cutoff:
+res_dneg_tb <- res_dneg_lfc %>%
+  data.frame() %>%
+  rownames_to_column(var="ensembl_gene_id") %>% 
+  as_tibble() 
+
+summary(is.na(res_dneg_tb))
+res_dneg_tb<- dplyr::inner_join(res_dneg_tb, ProteinCodingGenes[,c(2:4)], by ="ensembl_gene_id")
+
+res_dneg_tb <- res_dneg_tb %>%
+  mutate(dir= ifelse(res_dneg_tb$log2FoldChange < 0, "down", "up"))
+
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+write.csv(res_dneg_tb, file="ros_pfc_E4neg_ADvC.csv")
+```
+
+ApoE34 & ApoE44/E4pos AD vs Control\
+```{r}
+ros_dds_pos<- ros_dds[,ros_dds$ApoE2 =="E4pos"] #Has 86  samples ; dim: 18676    68
+
+res_dpos <- results(ros_dds_pos, contrast=c("Diagnosis", "AD", "Control"), independentFiltering=TRUE, alpha=0.05, pAdjustMethod="BH", parallel=TRUE) 
+summary(res_dpos) 
+plotMA(res_dpos, ylim=c(-2,2))
+
+library(apeglm) 
+res_dpos_lfc <- lfcShrink(ros_dds_pos, coef="Diagnosis_AD_vs_Control", type="apeglm", res=res_dpos)
+summary(res_dpos_lfc) 
+plotMA(res_dpos_lfc, ylim=c(-2,2))
+
+#Make dataset without cutoff:
+res_dpos_tb <- res_dpos_lfc %>%
+  data.frame() %>%
+  rownames_to_column(var="ensembl_gene_id") %>% 
+  as_tibble() 
+
+summary(is.na(res_dpos_tb))
+res_dpos_tb<- dplyr::inner_join(res_dpos_tb, ProteinCodingGenes[,c(2:4)], by ="ensembl_gene_id")
+
+res_dpos_tb <- res_dpos_tb %>%
+  mutate(dir= ifelse(res_dpos_tb$log2FoldChange < 0, "down", "up"))
+
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+write.csv(res_dpos_tb, file="ros_pfc_E4pos_ADvC.csv")
+```

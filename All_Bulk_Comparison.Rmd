@@ -1,0 +1,844 @@
+---
+title: "All_Bulk_Comparison"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Goal: Generate heatmaps and upset plots comparing all 7 brain regions\
+#Input datasets for DEGs\
+```{r}
+#Mayo TCX
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_TCX")
+mte4neg<- read.csv("mayo_tcx_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4pos<- read.csv("mayo_tcx_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4neg$group<- "MAYO.TCX_E4NEG"
+mte4pos$group<- "MAYO.TCX_E4POS"
+   
+#Mayo CBE
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+mce4neg<- read.csv("mayo_cbe_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4pos<- read.csv("mayo_cbe_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4neg$group<- "MAYO.CBE_E4NEG"
+mce4pos$group<- "MAYO.CBE_E4POS"
+
+#ROSMAP
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+rpe4neg<- read.csv("ros_pfc_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4pos<- read.csv("ros_pfc_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4neg$group<- "ROSMAP.PFC_E4NEG"
+rpe4pos$group<- "ROSMAP.PFC_E4POS"
+
+#MSBB10
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m10e4neg<- read.csv("msbb10_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4pos<- read.csv("msbb10_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4neg$group<- "MSBB.10_E4NEG"
+m10e4pos$group<- "MSBB.10_E4POS"
+
+#MSBB22
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m22e4neg<- read.csv("msbb22_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4pos<- read.csv("msbb22_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4neg$group<- "MSBB.22_E4NEG"
+m22e4pos$group<- "MSBB.22_E4POS"
+
+#MSBB36
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m36e4neg<- read.csv("msbb36_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m36e4pos<- read.csv("msbb36_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m36e4neg$group<- "MSBB.36_E4NEG"
+m36e4pos$group<- "MSBB.36_E4POS"
+
+#MSBB44
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m44e4neg<- read.csv("msbb44_E4neg_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m44e4pos<- read.csv("msbb44_E4pos_ADvC.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m44e4neg$group<- "MSBB.44_E4NEG"
+m44e4pos$group<- "MSBB.44_E4POS"
+
+bulk_degs<- rbind(mte4neg,mte4pos,mce4neg, mce4pos,rpe4neg,rpe4pos,m10e4neg,m10e4pos, m22e4neg, m22e4pos, m36e4neg, m36e4pos,m44e4neg, m44e4pos)
+rm(mte4neg,mte4pos,mce4neg, mce4pos,rpe4neg,rpe4pos,m10e4neg,m10e4pos, m22e4neg, m22e4pos, m36e4neg, m36e4pos,m44e4neg, m44e4pos )
+```
+
+Heatmaps for DEGs across datasets; keep genes with FDR < 0.05\
+```{r}
+bulk_degs$X<- NULL
+unique(bulk_degs$group) #14
+all_markers<-  subset(bulk_degs, padj < 0.05) #45330
+
+#Variable to graph by
+colnames(all_markers)
+all_markers<- all_markers[,c(7,3,10)]
+for(ct in unique(all_markers$group)){
+ new_col<- print(paste0('all_markers$',ct,'<- ifelse(all_markers$group == "',ct,'",all_markers$log2FoldChange, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+#Remove duplicates: if repeats add colsums of all repeated rows then remove duplicates
+all_markers <- all_markers %>% group_by(external_gene_name) %>% mutate(count = n())
+length(which(all_markers$count > 1)) #45330
+which(all_markers$external_gene_name == "SKI")  # 25  5828 22506 23315 34121 37797
+all_markers<- all_markers %>%
+   arrange(external_gene_name)
+which(all_markers$external_gene_name ==  "SKI")  # 34931 34932 34933 34934 34935 34936
+
+all_markers<- all_markers %>%                  # Specify data frame
+  group_by(external_gene_name) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_markers[,4:17])),  # Specify column
+               list(name = sum))                        # Specify function
+
+class(all_markers) #tibble
+all_markers<- as.data.frame(all_markers)
+colnames(all_markers)[2:15]<-gsub("_name","",colnames(all_markers[2:15])) 
+
+rownames(all_markers)<- all_markers$external_gene_name
+all_markers$external_gene_name<- NULL
+colnames(all_markers)
+range(all_markers) #-2.159812  3.745883
+
+anno <- data.frame( Brain_Region_APOE=  factor(colnames(all_markers)))
+anno$APOE<- str_sub(anno$Brain_Region_APOE, start= -5)
+anno$Brain_Region<-  str_sub(anno$Brain_Region_APOE, 1,-7)
+
+rownames(anno)<- anno$Brain_Region_APOE
+anno$Brain_Region_APOE<- NULL
+annoc<- list(Brain_Region = c( "MAYO.TCX"=dittoColors()[1],  "MAYO.CBE"=dittoColors()[15],  "ROSMAP.PFC"=dittoColors()[5],  "MSBB.10"=dittoColors()[7],   "MSBB.22"=dittoColors()[9],   "MSBB.22" =dittoColors()[10], "MSBB.36"=dittoColors()[11],  "MSBB.44"=dittoColors()[13]), APOE= c("E4NEG"=dittoColors()[3], "E4POS"=dittoColors()[4]))
+
+#pdf("all_bulk_deg_heatmaps_v2.pdf")
+paletteLength <- 50
+myColor <-  colorRampPalette(rev(brewer.pal(n = 7, name ="PuOr")))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(all_markers), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(all_markers)/paletteLength, max(all_markers), length.out=floor(paletteLength/2)))
+
+pheatmap(all_markers, angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc ,color = myColor, breaks = myBreaks)
+
+paletteLength <- 50
+myColor <-  colorRampPalette(rev(brewer.pal(n = 7, name ="RdBu")))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(all_markers), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(all_markers)/paletteLength, max(all_markers), length.out=floor(paletteLength/2)))
+
+pheatmap(all_markers, angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc ,color = myColor, breaks = myBreaks)
+#dev.off() 
+```
+
+Create upset plots across datasets\
+```{r}
+colnames(bulk_degs)
+bulk_degs$X<- NULL
+unique(bulk_degs$group)
+bulk_degs2<-  subset(bulk_degs, padj < 0.05 & abs(log2FoldChange) > 0.4)
+
+#mayo tcx vs cbe
+library(UpSetR)
+
+upset.list1<-list(MAYO.TCX_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4NEG" & bulk_degs2$dir == "up"],
+                 MAYO.TCX_E4NEG_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4NEG" & bulk_degs2$dir == "down"],
+                 MAYO.CBE_E4NEG_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4NEG" & bulk_degs2$dir == "up"],
+                MAYO.CBE_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4NEG" & bulk_degs2$dir == "down"])
+
+upset.list2<-list(MAYO.TCX_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4POS" & bulk_degs2$dir == "up"],
+                 MAYO.TCX_E4POS_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4POS" & bulk_degs2$dir == "down"],
+                 MAYO.CBE_E4POS_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4POS" & bulk_degs2$dir == "up"],
+                MAYO.CBE_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4POS" & bulk_degs2$dir == "down"])
+
+#c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars).
+up1<-upset(fromList(upset.list1), sets = c("MAYO.CBE_E4NEG_down","MAYO.CBE_E4NEG_up","MAYO.TCX_E4NEG_down", "MAYO.TCX_E4NEG_up"  ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 2.25, 2.25, 2.25)) 
+grid.text("TCX and CBE E4NEG DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+up2<-upset(fromList(upset.list2), sets = c( "MAYO.CBE_E4POS_down","MAYO.CBE_E4POS_up","MAYO.TCX_E4POS_down","MAYO.TCX_E4POS_up"), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.7, 2.25, 2.25)) 
+grid.text("TCX and CBE E4POS DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+#msbb 10,22,36,44 all 4 up, all 4 down
+
+upset.list3<-list(MSBB.10_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4NEG" & bulk_degs2$dir == "up"],
+                 MSBB.22_E4NEG_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4NEG" & bulk_degs2$dir == "up"],
+                 MSBB.36_E4NEG_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4NEG" & bulk_degs2$dir == "up"],
+                MSBB.44_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4NEG" & bulk_degs2$dir == "up"])
+
+upset.list4<-list(MSBB.10_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4NEG" & bulk_degs2$dir == "down"],
+                 MSBB.22_E4NEG_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4NEG" & bulk_degs2$dir == "down"],
+                 MSBB.36_E4NEG_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4NEG" & bulk_degs2$dir == "down"],
+                MSBB.44_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4NEG" & bulk_degs2$dir == "down"])
+
+upset.list5<-list(MSBB.10_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4POS" & bulk_degs2$dir == "up"],
+                 MSBB.22_E4POS_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4POS" & bulk_degs2$dir == "up"],
+                 MSBB.36_E4POS_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4POS" & bulk_degs2$dir == "up"],
+                MSBB.44_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4POS" & bulk_degs2$dir == "up"])
+
+upset.list6<-list(MSBB.10_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4POS" & bulk_degs2$dir == "down"],
+                 MSBB.22_E4POS_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4POS" & bulk_degs2$dir == "down"],
+                 MSBB.36_E4POS_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4POS" & bulk_degs2$dir == "down"],
+                MSBB.44_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4POS" & bulk_degs2$dir == "down"])
+
+#c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars).
+up3<- upset(fromList(upset.list3), sets = c("MSBB.44_E4NEG_up","MSBB.36_E4NEG_up", "MSBB.22_E4NEG_up", "MSBB.10_E4NEG_up" ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.8, 2.25, 2.25)) 
+grid.text("BM 10,22,36,44 E4NEG DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+up4<- upset(fromList(upset.list4), sets = c("MSBB.44_E4NEG_down","MSBB.36_E4NEG_down", "MSBB.22_E4NEG_down", "MSBB.10_E4NEG_down" ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.5, 2.25, 2.25)) 
+grid.text("BM 10,22,36,44 E4NEG DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+up5<- upset(fromList(upset.list5), sets = c("MSBB.44_E4POS_up","MSBB.36_E4POS_up", "MSBB.22_E4POS_up", "MSBB.10_E4POS_up" ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 2.25, 2.25, 2.25)) 
+grid.text("BM 10,22,36,44 E4POS DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+up6<- upset(fromList(upset.list6), sets = c("MSBB.44_E4POS_down","MSBB.36_E4POS_down", "MSBB.22_E4POS_down", "MSBB.10_E4POS_down" ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.8, 2.25, 2.25)) 
+grid.text("BM 10,22,36,44 E4POS DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+
+#all 7 up
+upset.list7<-list(MAYO.TCX_E4NEG_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4NEG" & bulk_degs2$dir == "up"],
+                MAYO.CBE_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4NEG" & bulk_degs2$dir == "up"],
+                ROSMAP.PFC_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "ROSMAP.PFC_E4NEG" & bulk_degs2$dir == "up"],
+                MSBB.10_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4NEG" & bulk_degs2$dir == "up"],
+                 MSBB.22_E4NEG_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4NEG" & bulk_degs2$dir == "up"],
+                 MSBB.36_E4NEG_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4NEG" & bulk_degs2$dir == "up"],
+                MSBB.44_E4NEG_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4NEG" & bulk_degs2$dir == "up"])
+
+
+upset.list8<-list(MAYO.TCX_E4NEG_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4NEG" & bulk_degs2$dir == "down"],
+                MAYO.CBE_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4NEG" & bulk_degs2$dir == "down"],
+                ROSMAP.PFC_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "ROSMAP.PFC_E4NEG" & bulk_degs2$dir == "down"],
+                MSBB.10_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4NEG" & bulk_degs2$dir == "down"],
+                 MSBB.22_E4NEG_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4NEG" & bulk_degs2$dir == "down"],
+                 MSBB.36_E4NEG_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4NEG" & bulk_degs2$dir == "down"],
+                MSBB.44_E4NEG_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4NEG" & bulk_degs2$dir == "down"])
+
+up7<- upset(fromList(upset.list7), sets = c( "MSBB.44_E4NEG_up","MSBB.36_E4NEG_up","MSBB.22_E4NEG_up", "MSBB.10_E4NEG_up", "ROSMAP.PFC_E4NEG_up","MAYO.CBE_E4NEG_up",  "MAYO.TCX_E4NEG_up"), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.8, 2.25, 1.5)) 
+grid.text("Upregulated E4NEG DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+up8<- upset(fromList(upset.list8), sets = c("MSBB.44_E4NEG_down","MSBB.36_E4NEG_down","MSBB.22_E4NEG_down", "MSBB.10_E4NEG_down", "ROSMAP.PFC_E4NEG_down","MAYO.CBE_E4NEG_down",  "MAYO.TCX_E4NEG_down"), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 2.25, 2.25, 1.5)) 
+grid.text("Downregulated E4NEG DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+#all 7 down
+upset.list9<-list(MAYO.TCX_E4POS_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4POS" & bulk_degs2$dir == "up"],
+                MAYO.CBE_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4POS" & bulk_degs2$dir == "up"],
+                ROSMAP.PFC_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "ROSMAP.PFC_E4POS" & bulk_degs2$dir == "up"],
+                MSBB.10_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4POS" & bulk_degs2$dir == "up"],
+                 MSBB.22_E4POS_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4POS" & bulk_degs2$dir == "up"],
+                 MSBB.36_E4POS_up=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4POS" & bulk_degs2$dir == "up"],
+                MSBB.44_E4POS_up= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4POS" & bulk_degs2$dir == "up"])
+
+
+upset.list10<-list(MAYO.TCX_E4POS_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.TCX_E4POS" & bulk_degs2$dir == "down"],
+                MAYO.CBE_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MAYO.CBE_E4POS" & bulk_degs2$dir == "down"],
+                ROSMAP.PFC_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "ROSMAP.PFC_E4POS" & bulk_degs2$dir == "down"],
+                MSBB.10_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.10_E4POS" & bulk_degs2$dir == "down"],
+                 MSBB.22_E4POS_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.22_E4POS" & bulk_degs2$dir == "down"],
+                 MSBB.36_E4POS_down=  bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.36_E4POS" & bulk_degs2$dir == "down"],
+                MSBB.44_E4POS_down= bulk_degs2$external_gene_name[bulk_degs2$group == "MSBB.44_E4POS" & bulk_degs2$dir == "down"])
+
+up9<- upset(fromList(upset.list9), sets = c( "MSBB.44_E4POS_up","MSBB.36_E4POS_up","MSBB.22_E4POS_up", "MSBB.10_E4POS_up", "ROSMAP.PFC_E4POS_up","MAYO.CBE_E4POS_up",  "MAYO.TCX_E4POS_up"), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.8, 2.25, 1.75)) 
+grid.text("Upregulated E4POS DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+up10<- upset(fromList(upset.list10), sets = c("MSBB.44_E4POS_down","MSBB.36_E4POS_down","MSBB.22_E4POS_down", "MSBB.10_E4POS_down", "ROSMAP.PFC_E4POS_down","MAYO.CBE_E4POS_down",  "MAYO.TCX_E4POS_down" ), keep.order = TRUE, order.by = "freq",  mainbar.y.label = "Gene Intersections",sets.x.label = "Number of DEGs", text.scale = c(2.25, 2.25, 1.9, 1.9, 2.25, 1.75)) 
+grid.text("Downregulated E4POS DEGs",x = 0.7, y=0.98, gp=gpar(fontsize=17))
+
+library(pheatmap)
+pdf("all_bulk_deg_upsets.pdf")
+up1
+up2
+up3
+up4
+up5
+up6
+up7
+up8
+up9
+up10
+dev.off()
+```
+
+#Input datasets for GO\
+greyed out sections are for datasets that are not present\ 
+```{r}
+#Mayo TCX
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_TCX")
+mte4neg_go_up<- read.csv("Mayo_TCX_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4neg_go_up$group<- "MAYO.TCX_E4NEG_up"
+   
+mte4neg_go_down<- read.csv("Mayo_TCX_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4neg_go_down$group<-  "MAYO.TCX_E4NEG_down"
+
+mte4pos_go_up<- read.csv("Mayo_TCX_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4pos_go_up$group<-  "MAYO.TCX_E4POS_up"
+
+# mte4pos_go_down<- read.csv("Mayo_TCX_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# mte4pos_go_down$group<-  "MAYO_TCX_E4POS_down"
+
+#Mayo CBE
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+mce4neg_go_up<- read.csv("Mayo_CBE_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4neg_go_up$group<- "MAYO.CBE_E4NEG_up"
+  
+mce4neg_go_down<- read.csv("Mayo_CBE_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4neg_go_down$group<-  "MAYO.CBE_E4NEG_down"
+
+mce4pos_go_up<- read.csv("Mayo_CBE_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4pos_go_up$group<-  "MAYO.CBE_E4POS_up"
+
+mce4pos_go_down<- read.csv("Mayo_CBE_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4pos_go_down$group<-  "MAYO.CBE_E4POS_down"
+
+#ROSMAP
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+# rpe4neg_go_up<- read.csv("ROSMAP_PFC_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# rpe4neg_go_up$group<- "ROSMAP.PFC_E4NEG_up"
+   
+rpe4neg_go_down<- read.csv("ROSMAP_PFC_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4neg_go_down$group<-  "ROSMAP.PFC_E4NEG_down"
+
+rpe4pos_go_up<- read.csv("ROSMAP_PFC_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4pos_go_up$group<-  "ROSMAP.PFC_E4POS_up"
+
+rpe4pos_go_down<- read.csv("ROSMAP_PFC_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4pos_go_down$group<-  "ROSMAP.PFC_E4POS_down"
+
+#MSBB10
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+# m10e4neg_go_up<- read.csv("MSBB10_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m10e4neg_go_up$group<- "MSBB.10_E4NEG_up"
+  
+m10e4neg_go_down<- read.csv("MSBB10_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4neg_go_down$group<-  "MSBB.10_E4NEG_down"
+
+m10e4pos_go_up<- read.csv("MSBB10_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4pos_go_up$group<-  "MSBB.10_E4POS_up"
+
+m10e4pos_go_down<- read.csv("MSBB10_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4pos_go_down$group<-  "MSBB.10_E4POS_down"
+
+#MSBB22
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m22e4neg_go_up<- read.csv("MSBB22_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4neg_go_up$group<- "MSBB.22_E4NEG_up"
+   
+# m22e4neg_go_down<- read.csv("MSBB22_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m22e4neg_go_down$group<-  "MSBB.22_E4NEG_down"
+# 
+# m22e4pos_go_up<- read.csv("MSBB22_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m22e4pos_go_up$group<-  "MSBB.22_E4POS_up"
+
+m22e4pos_go_down<- read.csv("MSBB22_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4pos_go_down$group<-  "MSBB.22_E4POS_down"
+
+#MSBB36
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m36e4neg_go_up<- read.csv("MSBB36_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m36e4neg_go_up$group<- "MSBB.36_E4NEG_up"
+   
+m36e4neg_go_down<- read.csv("MSBB36_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m36e4neg_go_down$group<-  "MSBB.36_E4NEG_down"
+
+# m36e4pos_go_up<- read.csv("MSBB36_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m36e4pos_go_up$group<-  "MSBB.36_E4POS_up"
+
+# m36e4pos_go_down<- read.csv("MSBB36_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m36e4pos_go_down$group<-  "MSBB.36_E4POS_down"
+
+#MSBB44
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m44e4neg_go_up<- read.csv("MSBB44_E4neg_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m44e4neg_go_up$group<- "MSBB.44_E4NEG_up"
+   
+m44e4neg_go_down<- read.csv("MSBB44_E4neg_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m44e4neg_go_down$group<-  "MSBB.44_E4NEG_down"
+# 
+# m44e4pos_go_up<- read.csv("MSBB44_E4pos_ADvC_up_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m44e4pos_go_up$group<-  "MSBB.44_E4POS_up"
+
+# m44e4pos_go_down<- read.csv("MSBB44_E4pos_ADvC_down_GO.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m44e4pos_go_down$group<-  "MSBB.44_E4POS_down"
+
+bulk_go<- rbind(mte4neg_go_up,mte4neg_go_down, mte4pos_go_up, mce4neg_go_up,mce4neg_go_down, mce4pos_go_up, mce4pos_go_down,rpe4neg_go_down, rpe4pos_go_up, rpe4pos_go_down,m10e4neg_go_down, m10e4pos_go_up, m10e4pos_go_down,m22e4neg_go_up, m22e4pos_go_down,m36e4neg_go_up,m36e4neg_go_down, m44e4neg_go_up,m44e4neg_go_down)
+unique(bulk_go$group) #19
+
+bulk_go$dir<-  sub('.*\\_', '', bulk_go$group)
+bulk_go$region<-  sub('\\_.*', '', bulk_go$group)
+bulk_go$Region_APOE<- gsub("_up", "",bulk_go$group)
+bulk_go$Region_APOE<- gsub("_down", "",bulk_go$Region_APOE)
+bulk_go$APOE<- sub('.*\\_', '', bulk_go$Region_APOE)
+```
+
+Create heatmaps across datasets\
+```{r}
+all_go<- bulk_go[bulk_go$p.adjust< 0.01,]
+length(unique(all_go$Description)) #93/269 (200/269)
+
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_go <-all_go %>% group_by(Description) %>% mutate(count = n())
+all_go$val<- ifelse(all_go$dir == "up" , 1,-1)
+colnames(all_go)
+all_go2<- all_go[,c(3,11:17)]
+
+for(ct in unique(all_go2$Region_APOE)){
+ new_col<- print(paste0('all_go2$',ct,'<- ifelse(all_go2$Region_APOE == "',ct,'",all_go2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_go2$count > 1)) #121
+which(all_go2$Description == "extracellular matrix structural constituent")  #1  38  64 114 177
+all_go2<- all_go2 %>%
+   arrange(Description)
+which(all_go2$Description == "extracellular matrix structural constituent")  # 74 75 76 77 78
+
+all_go2<- all_go2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_go2[,9:20])),  # Specify column
+               list(name = sum))                        # Specify function
+
+class(all_go2) #tibble
+all_go2<- as.data.frame(all_go2)
+colnames(all_go2)[2:13]<-gsub("_name","",colnames(all_go2[2:13])) 
+
+rownames(all_go2)<- all_go2$Description
+all_go2$Description<- NULL
+colnames(all_go2)
+range(all_go2) #-1 1
+
+anno <- data.frame( Region_APOE=  factor(colnames(all_go2)))
+anno<- rbind(anno, data.frame(Region_APOE ="MSBB.36_E4POS"), data.frame(Region_APOE="MSBB.44_E4POS"))#,stringsAsFactors=FALSE)
+anno$APOE<- str_sub(anno$Region_APOE, start= -5)
+anno$Region<-  sub('\\"_.*', '', anno$Region_APOE)
+rownames(anno)<- anno$Region_APOE
+anno$Region_APOE<- NULL
+annoc<- list(Region = c( "MAYO.TCX"=dittoColors()[1],  "MAYO.CBE"=dittoColors()[15],  "ROSMAP.PFC"=dittoColors()[5],  "MSBB.10"=dittoColors()[7],   "MSBB.22"=dittoColors()[9],   "MSBB.22" =dittoColors()[10], "MSBB.36"=dittoColors()[11],  "MSBB.44"=dittoColors()[13]), APOE= c("E4NEG"=dittoColors()[3], "E4POS"=dittoColors()[4]))
+
+library(pheatmap)
+#pdf("all_bulk_GO_heatmaps.pdf")
+pheatmap(all_go2, angle_col= "45", angle_row= "45",fontsize_row = 5, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))
+ 
+pheatmap(all_go2, angle_col= "45", angle_row= "45",fontsize_row = 6, show_colnames= FALSE,annotation_legend = FALSE, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))
+
+pheatmap(all_go2,angle_col= "45",fontsize_row = 5, cluster_cols = FALSE, cluster_rows= FALSE, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))#not clustered
+
+rangem <- max(abs(all_go2));
+pheatmap(all_go2, angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))#color = colorRampPalette(c("gold3", "white", "blue"))(100), breaks = seq(-rangem, rangem, length.out = 100))
+
+pheatmap(t(all_go2), angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_row= anno, annotation_colors = annoc ,color = colorRampPalette(c("gold3", "white", "blue"))(100), breaks = seq(-rangem, rangem, length.out = 100))
+#dev.off() 
+```
+
+Create heatmaps within datasets\
+setup 1\
+```{r}
+unique(bulk_go$Region_APOE) #"MSBB.36_E4POS"and "MSBB.44_E4POS" do not exist 
+bulk_go_OG<- bulk_go
+table(bulk_go_OG$region) 
+
+loopon<- c("MAYO.TCX", "MAYO.CBE" , "ROSMAP.PFC","MSBB.10","MSBB.22")
+#for(regg in unique(bulk_go_OG$region)){ 
+for(regg in loopon){ 
+ show(eval(expr = parse(text = print(paste0('all_go<- bulk_go_OG[bulk_go_OG$region =="', regg,'",]'),sep='',quote = FALSE))))
+length(unique(all_go$Description)) 
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_go <-all_go %>% group_by(Description) %>% mutate(count = n())
+all_go$val<- ifelse(all_go$dir == "up" , 1,-1)
+colnames(all_go)
+all_go2<- all_go[,c(3,11:17)]
+
+for(ct in unique(all_go2$Region_APOE)){
+ new_col<- print(paste0('all_go2$',ct,'<- ifelse(all_go2$Region_APOE == "',ct,'",all_go2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_go2$count > 1))
+all_go2<- all_go2 %>%
+   arrange(Description)
+
+all_go2<- all_go2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_go2[,9:10])),  # Specify column
+               list(name = sum))                        # Specify function
+
+all_go2<- as.data.frame(all_go2)
+colnames(all_go2)[2:3]<-gsub("_name","",colnames(all_go2[2:3])) 
+rownames(all_go2)<- all_go2$Description
+all_go2$Description<- NULL
+show(eval(expr = parse(text = print(paste0(regg,'_GO<- all_go2'),sep='',quote = FALSE))))
+}
+```
+
+setup 2\
+```{r}
+loopon2<- c("MSBB.36","MSBB.44")
+for(regg in loopon2){ 
+show(eval(expr = parse(text = print(paste0('all_go<- bulk_go_OG[bulk_go_OG$region =="', regg,'",]'),sep='',quote = FALSE))))
+length(unique(all_go$Description)) 
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_go <-all_go %>% group_by(Description) %>% mutate(count = n())
+all_go$val<- ifelse(all_go$dir == "up" , 1,-1)
+colnames(all_go)
+all_go2<- all_go[,c(3,11:17)]
+
+for(ct in unique(all_go2$Region_APOE)){
+ new_col<- print(paste0('all_go2$',ct,'<- ifelse(all_go2$Region_APOE == "',ct,'",all_go2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_go2$count > 1))
+all_go2<- all_go2 %>%
+   arrange(Description)
+show(eval(expr = parse(text = print(paste0('all_go2$',regg,'_E4POS<- 0'),sep='',quote = FALSE))))
+
+all_go2<- all_go2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_go2[,9:10])),  # Specify column
+               list(name = sum))                        # Specify function
+
+all_go2<- as.data.frame(all_go2)
+colnames(all_go2)[2:3]<-gsub("_name","",colnames(all_go2[2:3])) 
+rownames(all_go2)<- all_go2$Description
+all_go2$Description<- NULL
+show(eval(expr = parse(text = print(paste0(regg,'_GO<- all_go2'),sep='',quote = FALSE))))
+}
+```
+
+plot\
+```{r}
+anno$Region<- NULL
+#pdf("all_bulk_GO_indv heatmaps.pdf")
+for(regg in unique(bulk_go_OG$region)){ 
+   show(eval(expr = parse(text = print(paste0('pheatmap(',regg,'_GO',', angle_col= "45", angle_row= "45",fontsize_row = 7.5, show_colnames= FALSE,annotation_legend = FALSE, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))'),sep='',quote = FALSE))))
+}
+#dev.off() 
+#order: tcx, cbe, ros, 10, 22, 36, 44
+```
+
+
+#Input datasets for KEGG\
+```{r}
+#Mayo TCX
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_TCX")
+mte4neg_kegg_up<- read.csv("Mayo_TCX_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4neg_kegg_up$group<- "MAYO.TCX_E4NEG_up"
+   
+mte4neg_kegg_down<- read.csv("Mayo_TCX_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4neg_kegg_down$group<-  "MAYO.TCX_E4NEG_down"
+
+mte4pos_kegg_up<- read.csv("Mayo_TCX_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mte4pos_kegg_up$group<-  "MAYO.TCX_E4POS_up"
+
+# mte4pos_kegg_down<- read.csv("Mayo_TCX_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# mte4pos_kegg_down$group<-  "MAYO_TCX_E4POS_down"
+
+#Mayo CBE
+setwd("/home/Box/Bulk_RNASeq_Data/Mayo_CBE")
+mce4neg_kegg_up<- read.csv("Mayo_CBE_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+mce4neg_kegg_up$group<- "MAYO.CBE_E4NEG_up"
+#   
+# mce4neg_kegg_down<- read.csv("Mayo_CBE_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# mce4neg_kegg_down$group<-  "MAYO.CBE_E4NEG_down"
+
+# mce4pos_kegg_up<- read.csv("Mayo_CBE_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# mce4pos_kegg_up$group<-  "MAYO.CBE_E4POS_up"
+#
+# mce4pos_kegg_down<- read.csv("Mayo_CBE_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# mce4pos_kegg_down$group<-  "MAYO.CBE_E4POS_down"
+
+#ROSMAP
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+# rpe4neg_kegg_up<- read.csv("ROSMAP_PFC_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# rpe4neg_kegg_up$group<- "ROSMAP.PFC_E4NEG_up"
+   
+rpe4neg_kegg_down<- read.csv("ROSMAP_PFC_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4neg_kegg_down$group<-  "ROSMAP.PFC_E4NEG_down"
+
+rpe4pos_kegg_up<- read.csv("ROSMAP_PFC_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4pos_kegg_up$group<-  "ROSMAP.PFC_E4POS_up"
+
+rpe4pos_kegg_down<- read.csv("ROSMAP_PFC_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rpe4pos_kegg_down$group<-  "ROSMAP.PFC_E4POS_down"
+
+#MSBB10
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+# m10e4neg_kegg_up<- read.csv("MSBB10_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m10e4neg_kegg_up$group<- "MSBB.10_E4NEG_up"
+  
+m10e4neg_kegg_down<- read.csv("MSBB10_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4neg_kegg_down$group<-  "MSBB.10_E4NEG_down"
+
+m10e4pos_kegg_up<- read.csv("MSBB10_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4pos_kegg_up$group<-  "MSBB.10_E4POS_up"
+
+m10e4pos_kegg_down<- read.csv("MSBB10_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m10e4pos_kegg_down$group<-  "MSBB.10_E4POS_down"
+
+
+#MSBB22
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m22e4neg_kegg_up<- read.csv("MSBB22_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4neg_kegg_up$group<- "MSBB.22_E4NEG_up"
+   
+m22e4neg_kegg_down<- read.csv("MSBB22_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4neg_kegg_down$group<-  "MSBB.22_E4NEG_down"
+
+# m22e4pos_kegg_up<- read.csv("MSBB22_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m22e4pos_kegg_up$group<-  "MSBB.22_E4POS_up"
+
+m22e4pos_kegg_down<- read.csv("MSBB22_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m22e4pos_kegg_down$group<-  "MSBB.22_E4POS_down"
+
+
+#MSBB36
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m36e4neg_kegg_up<- read.csv("MSBB36_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m36e4neg_kegg_up$group<- "MSBB.36_E4NEG_up"
+   
+m36e4neg_kegg_down<- read.csv("MSBB36_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m36e4neg_kegg_down$group<-  "MSBB.36_E4NEG_down"
+# 
+# m36e4pos_kegg_up<- read.csv("MSBB36_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# # m36e4pos_kegg_up$group<-  "MSBB.36_E4POS_up"
+# 
+# m36e4pos_kegg_down<- read.csv("MSBB36_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m36e4pos_kegg_down$group<-  "MSBB.36_E4POS_down"
+
+#MSBB44
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+m44e4neg_kegg_up<- read.csv("MSBB44_E4neg_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+m44e4neg_kegg_up$group<- "MSBB.44_E4NEG_up"
+   
+# m44e4neg_kegg_down<- read.csv("MSBB44_E4neg_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m44e4neg_kegg_down$group<-  "MSBB.44_E4NEG_down"
+#  
+# m44e4pos_kegg_up<- read.csv("MSBB44_E4pos_ADvC_up_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m44e4pos_kegg_up$group<-  "MSBB.44_E4POS_up"
+# 
+# m44e4pos_kegg_down<- read.csv("MSBB44_E4pos_ADvC_down_KEGG.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+# m44e4pos_kegg_down$group<-  "MSBB.44_E4POS_down"
+
+bulk_kegg<- rbind(mte4neg_kegg_up,mte4neg_kegg_down, mte4pos_kegg_up, mce4neg_kegg_up, rpe4neg_kegg_down, rpe4pos_kegg_up, rpe4pos_kegg_down,m10e4neg_kegg_down, m10e4pos_kegg_up, m10e4pos_kegg_down,m22e4neg_kegg_up,m22e4neg_kegg_down, m22e4pos_kegg_down,m36e4neg_kegg_up,m36e4neg_kegg_down, m44e4neg_kegg_up)
+unique(bulk_kegg$group) #16
+
+bulk_kegg$dir<-  sub('.*\\_', '', bulk_kegg$group)
+bulk_kegg$region<-  sub('\\_.*', '', bulk_kegg$group)
+bulk_kegg$Region_APOE<- gsub("_up", "",bulk_kegg$group)
+bulk_kegg$Region_APOE<- gsub("_down", "",bulk_kegg$Region_APOE)
+bulk_kegg$APOE<- sub('.*\\_', '', bulk_kegg$Region_APOE)
+```
+
+Create heatmaps across datasets 0.05\
+```{r}
+all_kegg<- bulk_kegg[bulk_kegg$p.adjust< 0.05,]
+length(unique(all_kegg$Description)) #116/177
+
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_kegg <-all_kegg %>% group_by(Description) %>% mutate(count = n())
+all_kegg$val<- ifelse(all_kegg$dir == "up" , 1,-1)
+colnames(all_kegg)
+all_kegg2<- all_kegg[,c(3,11:17)]
+
+for(ct in unique(all_kegg2$Region_APOE)){
+ new_col<- print(paste0('all_kegg2$',ct,'<- ifelse(all_kegg2$Region_APOE == "',ct,'",all_kegg2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_kegg2$count > 1)) #99
+which(all_kegg2$Description == "TGF-beta signaling pathway")  #5 121
+all_kegg2<- all_kegg2 %>%
+   arrange(Description)
+which(all_kegg2$Description == "TGF-beta signaling pathway")  # 165 166
+
+all_kegg2<- all_kegg2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_kegg2[,9:19])),  # Specify column
+               list(name = sum))                        # Specify function
+
+class(all_kegg2) #tibble
+all_kegg2<- as.data.frame(all_kegg2)
+colnames(all_kegg2)[2:12]<-gsub("_name","",colnames(all_kegg2[2:12])) 
+
+rownames(all_kegg2)<- all_kegg2$Description
+all_kegg2$Description<- NULL
+colnames(all_kegg2)
+range(all_kegg2) #-1 1
+
+anno <- data.frame( Region_APOE=  factor(colnames(all_kegg2)))
+anno$APOE<- str_sub(anno$Region_APOE, start= -5)
+anno$Region<-  sub('\\_.*', '', anno$Region_APOE)
+rownames(anno)<- anno$Region_APOE
+anno$Region_APOE<- NULL
+annoc<- list(Region = c( "MAYO.TCX"=dittoColors()[1],  "MAYO.CBE"=dittoColors()[15],  "ROSMAP.PFC"=dittoColors()[5],  "MSBB.10"=dittoColors()[7],   "MSBB.22"=dittoColors()[9],   "MSBB.22" =dittoColors()[10], "MSBB.36"=dittoColors()[11],  "MSBB.44"=dittoColors()[13]), APOE= c("E4NEG"=dittoColors()[3], "E4POS"=dittoColors()[4]))
+
+library(pheatmap)
+#pdf("2021_04_26_all_bulk_KEGG_heatmaps.pdf")
+pheatmap(all_kegg2, angle_col= "45", angle_row= "45",fontsize_row = 5, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))
+ 
+pheatmap(all_kegg2, angle_col= "45", angle_row= "45",fontsize_row = 6, show_colnames= FALSE,annotation_legend = FALSE, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))
+
+pheatmap(all_kegg2,angle_col= "45",fontsize_row = 5, cluster_cols = FALSE, cluster_rows= FALSE, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))#not clustered
+
+rangem <- max(abs(all_kegg2));
+pheatmap(all_kegg2, angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))#color = colorRampPalette(c("keggld3", "white", "blue"))(100), breaks = seq(-rangem, rangem, length.out = 100))
+
+pheatmap(t(all_kegg2), angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_row= anno, annotation_colors = annoc ,color = colorRampPalette(c("gold3", "white", "blue"))(100), breaks = seq(-rangem, rangem, length.out = 100))
+#dev.off() 
+```
+
+Create heatmaps across datasets 0.01\
+```{r}
+all_kegg<- bulk_kegg[bulk_kegg$p.adjust< 0.01,]
+length(unique(all_kegg$Description)) #65/177 (116/177)
+
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_kegg <-all_kegg %>% group_by(Description) %>% mutate(count = n())
+all_kegg$val<- ifelse(all_kegg$dir == "up" , 1,-1)
+colnames(all_kegg)
+all_kegg2<- all_kegg[,c(3,11:17)]
+
+for(ct in unique(all_kegg2$Region_APOE)){
+ new_col<- print(paste0('all_kegg2$',ct,'<- ifelse(all_kegg2$Region_APOE == "',ct,'",all_kegg2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_kegg2$count > 1)) #46
+which(all_kegg2$Description == "TGF-beta signaling pathway")  # 5 65
+all_kegg2<- all_kegg2 %>%
+   arrange(Description)
+which(all_kegg2$Description == "TGF-beta signaling pathway")  # 82 83 
+
+all_kegg2<- all_kegg2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_kegg2[,9:17])),  # Specify column
+               list(name = sum))                        # Specify function
+
+class(all_kegg2) #tibble
+all_kegg2<- as.data.frame(all_kegg2)
+colnames(all_kegg2)[2:10]<-gsub("_name","",colnames(all_kegg2[2:10])) 
+
+rownames(all_kegg2)<- all_kegg2$Description
+all_kegg2$Description<- NULL
+colnames(all_kegg2)
+range(all_kegg2) #-1 1
+
+anno <- data.frame( Region_APOE=  factor(colnames(all_kegg2)))
+anno$APOE<- str_sub(anno$Region_APOE, start= -5)
+anno$Region<-  sub('\\_.*', '', anno$Region_APOE)
+rownames(anno)<- anno$Region_APOE
+anno$Region_APOE<- NULL
+annoc<- list(Region = c("MAYO.TCX"=dittoColors()[1],  "MAYO.CBE"=dittoColors()[15],  "ROSMAP.PFC"=dittoColors()[5],  "MSBB.10"=dittoColors()[7],   "MSBB.22"=dittoColors()[9],   "MSBB.22" =dittoColors()[10], "MSBB.36"=dittoColors()[11],  "MSBB.44"=dittoColors()[13]), APOE= c("E4NEG"=dittoColors()[3], "E4POS"=dittoColors()[4]))
+
+library(pheatmap)
+#pdf("2021_04_26_all_bulk_KEGG_heatmaps2.pdf")
+pheatmap(all_kegg2, angle_col= "45", angle_row= "45",fontsize_row = 5, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))
+ 
+pheatmap(all_kegg2, angle_col= "45", angle_row= "45",fontsize_row = 6, show_colnames= FALSE,annotation_legend = FALSE, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))
+
+pheatmap(all_kegg2,angle_col= "45",fontsize_row = 5, cluster_cols = FALSE, cluster_rows= FALSE, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))#not clustered
+
+rangem <- max(abs(all_kegg2));
+pheatmap(all_kegg2, angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))#color = colorRampPalette(c("keggld3", "white", "blue"))(100), breaks = seq(-rangem, rangem, length.out = 100))
+
+pheatmap(t(all_kegg2), angle_col= "90", angle_row= "45",fontsize_row = 12,fontsize_col= 12 , show_rownames = FALSE, show_colnames = FALSE, scale = "none" ,  border_color = "black",fontsize= 12,annotation_row= anno, annotation_colors = annoc ,color = colorRampPalette(c("gold3", "white", "blue"))(100), breaks = seq(-rangem, rangem, length.out = 100))
+#dev.off() 
+```
+
+Create heatmaps within datasets\
+setup 1\
+```{r}
+unique(bulk_kegg$Region_APOE) #"MAYO.CBE_E4POS", "MSBB.36_E4POS" "MSBB.44_E4POS" do not exist 
+bulk_kegg_OG<- bulk_kegg
+table(bulk_kegg_OG$region) 
+
+loopon<- c("MAYO.TCX" , "ROSMAP.PFC" ,"MSBB.10" , "MSBB.22" )
+#for(regg in unique(bulk_kegg_OG$region)){ 
+for(regg in loopon){ 
+ show(eval(expr = parse(text = print(paste0('all_kegg<- bulk_kegg_OG[bulk_kegg_OG$region =="', regg,'",]'),sep='',quote = FALSE))))
+length(unique(all_kegg$Description)) 
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_kegg <-all_kegg %>% group_by(Description) %>% mutate(count = n())
+all_kegg$val<- ifelse(all_kegg$dir == "up" , 1,-1)
+colnames(all_kegg)
+all_kegg2<- all_kegg[,c(3,11:17)]
+
+for(ct in unique(all_kegg2$Region_APOE)){
+ new_col<- print(paste0('all_kegg2$',ct,'<- ifelse(all_kegg2$Region_APOE == "',ct,'",all_kegg2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_kegg2$count > 1))
+all_kegg2<- all_kegg2 %>%
+   arrange(Description)
+
+all_kegg2<- all_kegg2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_kegg2[,9:10])),  # Specify column
+               list(name = sum))                        # Specify function
+
+all_kegg2<- as.data.frame(all_kegg2)
+colnames(all_kegg2)[2:3]<-gsub("_name","",colnames(all_kegg2[2:3])) 
+rownames(all_kegg2)<- all_kegg2$Description
+all_kegg2$Description<- NULL
+show(eval(expr = parse(text = print(paste0(regg,'_KEGG<- all_kegg2'),sep='',quote = FALSE))))
+}
+```
+
+setup 2\
+```{r}
+loopon2<- c("MAYO.CBE","MSBB.36","MSBB.44")
+for(regg in loopon2){ 
+show(eval(expr = parse(text = print(paste0('all_kegg<- bulk_kegg_OG[bulk_kegg_OG$region =="', regg,'",]'),sep='',quote = FALSE))))
+length(unique(all_kegg$Description)) 
+#Remove duplicates
+#if repeats add colsums of all repeated rows then remove duplicates
+all_kegg <-all_kegg %>% group_by(Description) %>% mutate(count = n())
+all_kegg$val<- ifelse(all_kegg$dir == "up" , 1,-1)
+colnames(all_kegg)
+all_kegg2<- all_kegg[,c(3,11:17)]
+
+for(ct in unique(all_kegg2$Region_APOE)){
+ new_col<- print(paste0('all_kegg2$',ct,'<- ifelse(all_kegg2$Region_APOE == "',ct,'",all_kegg2$val, 0)'),sep='',quote = FALSE)
+ show(eval(expr = parse(text = new_col)))
+}
+
+length(which(all_kegg2$count > 1))
+all_kegg2<- all_kegg2 %>%
+   arrange(Description)
+show(eval(expr = parse(text = print(paste0('all_kegg2$',regg,'_E4POS<- 0'),sep='',quote = FALSE))))
+
+all_kegg2<- all_kegg2 %>%                  # Specify data frame
+  group_by(Description) %>%                             # Specify group indicator
+  summarise_at(vars(colnames(all_kegg2[,9:10])),  # Specify column
+               list(name = sum))                        # Specify function
+
+all_kegg2<- as.data.frame(all_kegg2)
+colnames(all_kegg2)[2:3]<-gsub("_name","",colnames(all_kegg2[2:3])) 
+rownames(all_kegg2)<- all_kegg2$Description
+all_kegg2$Description<- NULL
+show(eval(expr = parse(text = print(paste0(regg,'_KEGG<- all_kegg2'),sep='',quote = FALSE))))
+}
+```
+
+plot\
+```{r}
+anno$Region<- NULL
+#pdf("2021_04_26_all_bulk_KEGG_indv heatmaps.pdf")
+loopon3<- c("MAYO.TCX" ,  "MAYO.CBE" ,  "ROSMAP.PFC" ,"MSBB.10"  ,  "MSBB.22"  ,  "MSBB.36" )
+for(regg in loopon3){ 
+   show(eval(expr = parse(text = print(paste0('pheatmap(',regg,'_KEGG',', angle_col= "45", angle_row= "45",fontsize_row = 7.5, show_colnames= FALSE,annotation_legend = FALSE, annotation_col= anno, annotation_colors = annoc, color = colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = "BrBG")))(100))'),sep='',quote = FALSE))))
+}
+#dev.off() 
+#order tcx,cbe,ros, 10,22,36
+#MSBB44 only had 1 pathway, so could not cluster
+```
+
+#Save datasets\
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/")
+write.csv(bulk_degs, file="bulk_degs.csv")
+write.csv(bulk_go, file="bulk_go.csv")
+write.csv(bulk_kegg, file="bulk_kegg.csv")
+```

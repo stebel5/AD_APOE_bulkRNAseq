@@ -1,0 +1,405 @@
+---
+title: "MSBB44_DE"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load necessary libraries\
+```{r}
+library(DESeq2) 
+library(tidyverse)
+library(tximport)
+library(ggrepel)
+library(magrittr)
+library(dplyr)
+```
+
+https://www.synapse.org/#!Synapse:syn6100548\
+Input data
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+msbb_all_meta<- read.csv("MSBB_metasubset_93inv_255samp.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+msbb_all_data<- read.csv("MSBB_countsubset_93inv_255samp.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Subset data to Brodmann 44 and match meta and data order & EDA
+match design to that of mayo's Batch + Diagnosis + Sex + Age + ApoE2 
+```{r}
+msbb_meta<- msbb_all_meta[msbb_all_meta$BrodmannArea == "BM44",-1] #57
+rownames(msbb_meta)<- msbb_meta$sampleIdentifier 
+
+table(msbb_meta$Diagnosis) #47ad, 10c
+table(msbb_meta$ApoE)#33(39),34(15),44(3)
+table(msbb_meta$Sex)#35f, 22m
+table(msbb_meta$Race)#6B,1H, 50W
+table(msbb_meta$Age2)#60s(2),70s(14),80s(22),90s(19)
+table(msbb_meta$ApoE[msbb_meta$Diagnosis == "AD"]) #33(31), 34(13), 44(3)
+table(msbb_meta$ApoE[msbb_meta$Diagnosis != "AD"]) #33(8), 34(2), 44(0)
+table(msbb_meta$ApoE[msbb_meta$Sex == "F"]) #33(24), 34(9), 44(2)
+table(msbb_meta$ApoE[msbb_meta$Sex != "F"]) #33(15), 34(6), 44(1)
+
+table(msbb_meta$Sex[msbb_meta$Diagnosis == "AD"],msbb_meta$ApoE[msbb_meta$Diagnosis == "AD"])  
+table(msbb_meta$Sex[msbb_meta$Diagnosis != "AD"], msbb_meta$ApoE[msbb_meta$Diagnosis != "AD"])  
+
+msbb_meta<- msbb_meta[,c(4,10,13:15)]
+colnames(msbb_meta)[5]<- "Age"
+msbb_meta$ApoE2<- ifelse(msbb_meta$ApoE == "33", "E4neg", "E4pos") 
+
+rownames(msbb_all_data)<- (msbb_all_data$X)
+msbb_data<- msbb_all_data[,colnames(msbb_all_data) %in% rownames(msbb_meta)]
+
+#Rearrange rows/columns
+summary(rownames(msbb_meta) == colnames(msbb_data)) 
+msbb_meta<- msbb_meta[match(colnames(msbb_data),rownames(msbb_meta)),]
+summary(rownames(msbb_meta) == colnames(msbb_data)) 
+```
+
+Set-up and run Deseq
+```{r}
+msbb_meta$Diagnosis %<>% factor
+msbb_meta$Sex %<>% factor 
+msbb_meta$ApoE %<>% factor
+msbb_meta$ApoE2 %<>% factor 
+msbb_meta$Age %<>% factor 
+msbb_meta$Batch %<>% factor 
+sapply(msbb_meta, class) 
+
+msbb_dds<- DESeqDataSetFromMatrix(countData= as.matrix(msbb_data), colData= msbb_meta, design= ~ Batch + Diagnosis + Sex + Age + ApoE2 )
+#19679 57
+
+levels(msbb_dds$Diagnosis) #"AD"      "Control"
+msbb_dds$Diagnosis <-factor(msbb_dds$Diagnosis, levels = c("Control","AD") )   
+
+levels(msbb_dds$Sex) #"F" "M"
+msbb_dds$Sex <-factor(msbb_dds$Sex, levels = c("M","F") )   #make male the reference level 
+
+levels(msbb_dds$ApoE2) #"E4neg" "E4pos"
+
+keep<- rowSums(counts(msbb_dds)) >=10  #filter genes with low counts 
+msbb_dds= msbb_dds[keep,]  #18148 57  
+
+msbb_dds<- DESeq(msbb_dds) 
+resultsNames(msbb_dds) #lists the coefficients
+
+msbb_dds<- msbb_dds[which(mcols(msbb_dds)$betaConv),] #1 row did not converge #18147 57 
+```
+ 
+#Pre-batch correction
+QC: PCA
+```{r}
+msbb_vsd <- vst(msbb_dds, blind=TRUE)  
+msbb_vsd_mat<- assay(msbb_vsd) 
+msbb.pca<- prcomp(t(msbb_vsd_mat), scale.=TRUE)
+msbb.pca.var<- msbb.pca$sdev^2 #square of std dev is variance
+msbb.pca.var.per<- round(msbb.pca.var/sum(msbb.pca.var)*100,1) #percentage of variance
+msbb_pca_extra<- cbind(msbb_meta, msbb.pca$x)
+
+#pdf("msbb44.pca.plots1.pdf") 
+barplot(msbb.pca.var.per, main="Scree Plot_ Percent of Variation (MSBB44 PCA)",xlab="Principal Component", ylab="Percent Variation", ylim=c(0,40))#plot percentage of variation
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Diagnosis)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) + ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Diagnosis")  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= ApoE2)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: APOE")  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Sex)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Age)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Age") + scale_colour_manual(values = dittoColors()[8:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Batch)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Batch") + scale_colour_manual(values = dittoColors()[12:17])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+#Slight batch effect!!
+```
+
+QC: tSNE
+```{r}
+library(caret)
+library(Rtsne) 
+
+msbb_tsne<- t(msbb_data)
+rownames(msbb_tsne) == rownames(msbb_meta)
+msbb_tsne2<- merge(msbb_tsne, msbb_meta, by = "row.names")
+dim(msbb_tsne) # 57 19679
+
+set.seed(5)
+tsne_out <- Rtsne(as.matrix(msbb_tsne),pca=FALSE,perplexity= 15,theta=0.0) # Run TSNE
+
+#pdf("msbb44.tsne.plots1.pdf") 
+tsne_plotD <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Diagnosis)
+ggplot(tsne_plotD) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Diagnosis") + theme_bw()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotA <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$ApoE2)
+ggplot(tsne_plotA) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by ApoE status") + theme_bw()  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotG <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Sex)
+ggplot(tsne_plotG) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Sex") + theme_bw() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotAg <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Age)
+ggplot(tsne_plotAg) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Age") + theme_bw()  + scale_colour_manual(values = dittoColors()[8:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotB <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Batch)
+ggplot(tsne_plotB) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Batch") + theme_bw() + scale_colour_manual(values = dittoColors()[12:17])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+QC: UMAP
+```{r}
+msbb_udat<- msbb_tsne
+ 
+set.seed(6)
+library(umap)
+msbb.umap= umap(msbb_udat)
+msbb.umap #214 items, 2 dimensions
+head(msbb.umap$layout, 3) 
+
+msbb.umap2<- data.frame(msbb.umap$layout)
+colnames(msbb.umap2)[1:2]<- c("UMAP1","UMAP2")
+msbb.umap2<- merge(msbb.umap2,msbb_meta, by= 0) 
+sapply(msbb.umap2,class)
+
+#pdf("msbb44.umap.plots1.pdf") 
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Diagnosis)) + geom_point()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = ApoE2)) + geom_point() + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Sex)) + geom_point() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Age)) + geom_point() + scale_colour_manual(values = dittoColors()[8:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Batch)) + geom_point() + scale_colour_manual(values = dittoColors()[12:17])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off() 
+```
+
+QC: Hierarchical Clustering: samples x samples
+```{r}
+library(pheatmap)
+#msbb_vsd_mat<- assay(msbb_vsd)  #get rlog matrix 
+msbb_vsd_cor<- cor(msbb_vsd_mat) #use cor base R functon to compute pairwise correlation values
+head(msbb_vsd_cor) #check output, note row and column names
+
+annocolors<- list(Diagnosis = c("AD"= dittoColors()[1], "Control" = dittoColors()[2]), 
+             ApoE2 = c("E4neg"= dittoColors()[3], "E4pos" = dittoColors()[4]),
+             Sex= c("F"= dittoColors()[5], "M" = dittoColors()[6]),
+             Age= c("60s"= dittoColors()[8], "70s"= dittoColors()[9], "80s" = dittoColors()[10], "90s" = dittoColors()[11]),
+             Batch= c("B28C849"= dittoColors()[12], "E008C189"= dittoColors()[13], "E009C189"= dittoColors()[14], "K79C014" = dittoColors()[15],"K80C014"= dittoColors()[16], "K82C014"= dittoColors()[17]))
+
+colnames(msbb_meta)
+
+#pdf("msbb44.clustheatmap1.pdf") 
+pheatmap(msbb_vsd_cor, annotation = msbb_meta[,c(1,2,4:6)], annotation_colors = annocolors, show_rownames = F, show_colnames = F, fontsize = 5)
+pheatmap(msbb_vsd_cor, annotation = msbb_meta[,c(1,2,4:6)], annotation_colors = annocolors, show_rownames = T, show_colnames = T, fontsize = 5, angle_col = "45") 
+logcounts<- log2(counts(msbb_dds, normalized= TRUE) + 1)
+plot(hclust(dist(t(logcounts))), labels=colnames((msbb_dds)))
+#dev.off()
+```
+
+
+#QC post batch correction
+Correct batch effect and rerun all plots to confirm 
+```{r}
+library(limma)
+msbb_databc <- limma::removeBatchEffect(msbb_data, msbb_meta$Batch)
+assay(msbb_vsd) <- limma::removeBatchEffect(assay(msbb_vsd), msbb_vsd$Batch)
+```
+
+Redo QC: PCA
+```{r}
+# msbb_vsd <- vst(msbb_dds, blind=TRUE)  
+msbb_vsd_mat<- assay(msbb_vsd) 
+msbb.pca<- prcomp(t(msbb_vsd_mat), scale.=TRUE)
+msbb.pca.var<- msbb.pca$sdev^2 #square of std dev is variance
+msbb.pca.var.per<- round(msbb.pca.var/sum(msbb.pca.var)*100,1) #percentage of variance
+msbb_pca_extra<- cbind(msbb_meta, msbb.pca$x)
+
+#pdf("msbb44.pca.plots2.pdf") 
+barplot(msbb.pca.var.per, main="Scree Plot_ Percent of Variation (MSBB44 PCA)",xlab="Principal Component", ylab="Percent Variation", ylim=c(0,40))#plot percentage of variation
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Diagnosis)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) + ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Diagnosis")  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= ApoE2)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: APOE")  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Sex)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Sex") + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Age)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Age") + scale_colour_manual(values = dittoColors()[8:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb_pca_extra) + geom_point(aes(x=PC1, y=PC2, color= Batch)) + xlab(paste("PC1 - ",msbb.pca.var.per[1], "%", sep="")) +   ylab(paste("PC2 - ",msbb.pca.var.per[2], "%", sep="")) + ggtitle("BA 44 PCA: Batch") + scale_colour_manual(values = dittoColors()[12:17])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+Redo QC: tSNE
+```{r}
+library(caret)
+library(Rtsne) 
+
+msbb_tsne<- t(msbb_databc)
+rownames(msbb_tsne) == rownames(msbb_meta)
+msbb_tsne2<- merge(msbb_tsne, msbb_meta, by = "row.names")
+dim(msbb_tsne) # 65 19679
+
+set.seed(5)
+tsne_out <- Rtsne(as.matrix(msbb_tsne),pca=FALSE,perplexity= 15,theta=0.0) # Run TSNE
+
+#pdf("msbb44.tsne.plots2.pdf") 
+tsne_plotD <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Diagnosis)
+ggplot(tsne_plotD) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Diagnosis") + theme_bw()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotA <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$ApoE2)
+ggplot(tsne_plotA) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by ApoE status") + theme_bw()  + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotG <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Sex)
+ggplot(tsne_plotG) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Sex") + theme_bw() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotAg <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Age)
+ggplot(tsne_plotAg) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Age") + theme_bw()  + scale_colour_manual(values = dittoColors()[8:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+tsne_plotB <- data.frame(x = tsne_out$Y[,1], y = tsne_out$Y[,2], col = msbb_tsne2$Batch)
+ggplot(tsne_plotB) + geom_point(aes(x=x, y=y, color=col)) + labs(x="t-SNE dimension 1", y="t-SNE dimension 2", title = "MSBB44 2D t-SNE projection stratified by Batch") + theme_bw() + scale_colour_manual(values = dittoColors()[12:17])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off()
+```
+
+Redo QC: UMAP
+```{r}
+library(umap)
+msbb_udat<- msbb_tsne
+ 
+set.seed(6)
+msbb.umap= umap(msbb_udat)
+msbb.umap #57 items, 2 dimensions
+head(msbb.umap$layout, 3) 
+
+msbb.umap2<- data.frame(msbb.umap$layout)
+colnames(msbb.umap2)[1:2]<- c("UMAP1","UMAP2")
+msbb.umap2<- merge(msbb.umap2,msbb_meta, by= 0) 
+sapply(msbb.umap2,class)
+
+#pdf("msbb44.umap.plots2.pdf") 
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Diagnosis)) + geom_point()  + scale_colour_manual(values = dittoColors()[1:2])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = ApoE2)) + geom_point() + scale_colour_manual(values = dittoColors()[3:4])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Sex)) + geom_point() + scale_colour_manual(values = dittoColors()[5:6])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Age)) + geom_point() + scale_colour_manual(values = dittoColors()[8:11])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+
+ggplot(msbb.umap2, aes( UMAP1, UMAP2, color = Batch)) + geom_point() + scale_colour_manual(values = dittoColors()[12:17])+ theme(axis.text=element_text(size=20,face="bold"),  plot.title=element_text(size=20,face="bold"),  axis.title=element_text(size=20,face="bold"), legend.text = element_text( size = 20), legend.title = element_text( size = 20,face="bold")) 
+#dev.off() 
+```
+
+Redo QC: Hierarchical Clustering: samples x samples
+```{r}
+library(pheatmap)
+#msbb_vsd_mat<- assay(msbb_vsd)  #get rlog matrix 
+msbb_vsd_cor<- cor(msbb_vsd_mat) #use cor base R functon to compute pairwise correlation values
+head(msbb_vsd_cor) #check output, note row and column names
+
+annocolors<- list(Diagnosis = c("AD"= dittoColors()[1], "Control" = dittoColors()[2]), 
+             ApoE2 = c("E4neg"= dittoColors()[3], "E4pos" = dittoColors()[4]),
+             Sex= c("F"= dittoColors()[5], "M" = dittoColors()[6]),
+             Age= c("60s"= dittoColors()[8], "70s"= dittoColors()[9], "80s" = dittoColors()[10], "90s" = dittoColors()[11]),
+          Batch= c("B28C849"= dittoColors()[12], "E008C189"= dittoColors()[13], "E009C189"= dittoColors()[14], "K79C014" = dittoColors()[15],"K80C014"= dittoColors()[16], "K82C014"= dittoColors()[17]))
+
+
+colnames(msbb_meta)
+#pdf("msbb44.clustheatmap2.pdf") 
+pheatmap(msbb_vsd_cor, annotation = msbb_meta[,c(1,2,4:6)], annotation_colors = annocolors, show_rownames = F, show_colnames = F, fontsize = 5)
+pheatmap(msbb_vsd_cor, annotation = msbb_meta[,c(1,2,4:6)], annotation_colors = annocolors, show_rownames = T, show_colnames = T, fontsize = 5, angle_col = "45") 
+logcounts<- log2(counts(msbb_dds, normalized= TRUE) + 1)
+plot(hclust(dist(t(logcounts))), labels=colnames((msbb_dds)))
+#dev.off()
+```
+
+
+#Check for outliers
+```{r}
+#PC1
+msbb.pca12.zcores<- msbb_pca_extra
+sd_pc1<-sd(msbb.pca12.zcores$PC1)
+mean_pc1<-mean(msbb.pca12.zcores$PC1)
+msbb.pca12.zcores$pc1z<- (msbb.pca12.zcores$PC1 - mean_pc1)/sd_pc1
+range(msbb.pca12.zcores$pc1z) #-2.648497  1.51385
+
+#PC2
+sd_pc2<-sd(msbb.pca12.zcores$PC2)
+mean_pc2<-mean(msbb.pca12.zcores$PC2)
+msbb.pca12.zcores$pc2z<- (msbb.pca12.zcores$PC2 - mean_pc2)/sd_pc2
+range(msbb.pca12.zcores$pc2z) # -2.262744  1.899398
+
+#No outliers!
+```
+
+
+Save dds object
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+saveRDS(msbb_dds, "msbb44_dds.rds") 
+```
+
+
+#DE: Up and Downregulated (FC +/- 1.2, padj 0.05)
+Differential Expression Analysis: 
+Up and Downregulated (Fold Change +/- 1.3 or 0.4 log FC, padj < 0.05)
+To help compare several combinations of levels https://www.biostars.org/p/325009/
+Stratify by ApoE4, then run case vs control DE analysis
+ApoE33/E4neg AD vs Control
+```{r}
+msbb_dds_neg<- msbb_dds[,msbb_dds$ApoE2 =="E4neg"] #18147 39  
+
+res_dneg <- results(msbb_dds_neg, contrast=c("Diagnosis", "AD", "Control"), independentFiltering=TRUE, alpha=0.05, pAdjustMethod="BH", parallel=TRUE) 
+summary(res_dneg) 
+plotMA(res_dneg, ylim=c(-2,2))
+
+library(apeglm) 
+res_dneg_lfc <- lfcShrink(msbb_dds_neg, coef="Diagnosis_AD_vs_Control", type="apeglm", res=res_dneg)
+summary(res_dneg_lfc) 
+plotMA(res_dneg_lfc, ylim=c(-2,2))
+
+#Make dataset without cutoff:
+res_dneg_tb <- res_dneg_lfc %>%
+  data.frame() %>%
+  rownames_to_column(var="ensembl_gene_id") %>% 
+  as_tibble() 
+
+summary(is.na(res_dneg_tb))
+res_dneg_tb<- dplyr::inner_join(res_dneg_tb, ProteinCodingGenes[,c(2:4)], by ="ensembl_gene_id")
+
+res_dneg_tb <- res_dneg_tb %>%
+  mutate(dir= ifelse(res_dneg_tb$log2FoldChange < 0, "down", "up"))
+
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+write.csv(res_dneg_tb, file="msbb44_E4neg_ADvC.csv")
+```
+
+ApoE34 & ApoE44/E4pos AD vs Control
+```{r}
+msbb_dds_pos<- msbb_dds[,msbb_dds$ApoE2 =="E4pos"] #18147 18 
+
+res_dpos <- results(msbb_dds_pos, contrast=c("Diagnosis", "AD", "Control"), independentFiltering=TRUE, alpha=0.05, pAdjustMethod="BH", parallel=TRUE) 
+summary(res_dpos) 
+plotMA(res_dpos, ylim=c(-2,2))
+
+library(apeglm) 
+res_dpos_lfc <- lfcShrink(msbb_dds_pos, coef="Diagnosis_AD_vs_Control", type="apeglm", res=res_dpos)
+summary(res_dpos_lfc) 
+plotMA(res_dpos_lfc, ylim=c(-2,2))
+
+#Make dataset without cutoff:
+res_dpos_tb <- res_dpos_lfc %>%
+  data.frame() %>%
+  rownames_to_column(var="ensembl_gene_id") %>% 
+  as_tibble() 
+
+summary(is.na(res_dpos_tb))
+res_dpos_tb<- dplyr::inner_join(res_dpos_tb, ProteinCodingGenes[,c(2:4)], by ="ensembl_gene_id")
+
+res_dpos_tb <- res_dpos_tb %>%
+  mutate(dir= ifelse(res_dpos_tb$log2FoldChange < 0, "down", "up"))
+
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+write.csv(res_dpos_tb, file="msbb44_E4pos_ADvC.csv")
+```
+

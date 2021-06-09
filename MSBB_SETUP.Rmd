@@ -1,0 +1,253 @@
+---
+title: "MSBB_SETUP"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+
+AMP-AD Data Source Links:\
+https://www.synapse.org/#!Synapse:syn8691099\
+https://www.synapse.org/#!Synapse:syn6100548\
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+msbb_covar<- read.csv("MSBB_RNAseq_covariates_November2018Update.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+msbb_data<- read.table("MSSM_all_counts_matrix.txt.gz",header= TRUE, sep = "\t", stringsAsFactors=FALSE)
+msbb_clin<- read.csv("MSBB_clinical.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Load necessary libraries
+```{r}
+library(DESeq2) 
+library(tidyverse)
+library(tximport)
+library(ggrepel)
+library(magrittr)
+library(dplyr)
+```
+
+EDA\
+```{r}
+unique(msbb_covar$BrodmannArea) # "BM22" "BM36" "BM10" "BM44"
+length(unique(msbb_covar$synapseId)) #2559
+length(unique(msbb_covar$sampleIdentifier)) #1283
+length(unique(msbb_covar$barcode)) #1146 
+length(unique(msbb_covar$individualIdentifier)) #316 
+length(unique(msbb_covar$individualIdentifier.inferred)) #315
+
+samples_n_meta<- unique(msbb_covar$sampleIdentifier) #1283
+samples_n_data<- colnames(msbb_data) #1027
+sum(samples_n_meta %in% samples_n_data) #1026
+```
+
+Sample filter; !duplicate\ 
+https://software.broadinstitute.org/cancer/cga/sites/default/files/data/tools/rnaseqc/RNA-SeQC_Help_v1.1.2.pdf\
+```{r}
+#Keep samples present in data file
+msbb_covar2<- msbb_covar[msbb_covar$sampleIdentifier %in% samples_n_data,] #2052
+unique(msbb_covar2$sampleIdentifier)
+
+#Remove samples with QC actions “Remap” or “Exclude”,
+unique(msbb_covar2$Action)
+msbb_covar2<-msbb_covar2[msbb_covar2$Action == "OKay",] #2014
+
+#Remove samples with low RIN score (<4)
+msbb_covar2<-msbb_covar2[msbb_covar2$RIN >= 4,] #1876 
+
+#Remove samples with relatively large rRNA rate (>5%) [reads mapped to rRNA regions/total reads]
+range(msbb_covar2$rRNA.rate)
+msbb_covar2$rRNA.percent<- msbb_covar2$rRNA.rate * 100
+range(msbb_covar2$rRNA.percent)
+msbb_covar2<-msbb_covar2[msbb_covar2$rRNA.percent <= 5,] #1842
+
+#Post filter EDA
+unique(msbb_covar2$BrodmannArea) # "BM22" "BM36" "BM10" "BM44"
+length(unique(msbb_covar2$synapseId)) #1842
+length(unique(msbb_covar2$sampleIdentifier)) #921
+length(unique(msbb_covar2$barcode)) #867
+length(unique(msbb_covar2$individualIdentifier)) #288
+length(unique(msbb_covar2$individualIdentifier.inferred)) #287
+
+#Keep unique sample identifiers
+msbb_covar3<-msbb_covar2[!duplicated(msbb_covar2$sampleIdentifier),] #921
+length(unique(msbb_covar3$sampleIdentifier)) #921
+length(unique(msbb_covar3$individualIdentifier)) #288
+```
+
+Other EDA + Sort region info\
+A=Asian, B=Black, H=Hispanic, W=White, U=Unknown\
+Brodmann areas\
+10: Prefrontal cortex\
+22: Wernicke posterior temporal area for speech comprehension ->Tcx\
+36: Temporal region of cerebral cortex -> TcX\
+44: Broca anterior frontal area for speech production -> PFcx\
+
+AD vs Control:https://www.sciencedirect.com/science/article/pii/S2211124720308895?via%3Dihub\
+AD:CDR>= 1,Braak>=4, CERAD/NP.1 >=2\
+Control:CDR<= 0.5,Braak <=3, CERAD/NP.1 <=1\
+
+NP.1 Neuropathology Category as measured by CERAD (1=Normal, 2=Definite AD, 3=probable AD, 4=possible AD)\
+https://www.synapse.org/#!Synapse:syn2580853/discussion/threadId=7870 (for CERAD info)\
+Do I separate by brodmann area or frontal vs temp, how to account for multiple samples per person? -> By BM, use unique and latest/resequenced samples\
+https://www.synapse.org/#!Synapse:syn2580853/discussion/threadId=4763 (repeated samples in same region)\
+
+Merge covar with clin data/Sort ApoE status\
+```{r}
+unique(msbb_covar3$SEX.inferred)
+unique(msbb_covar3$RACE.inferred)
+
+msbb_covar4<- msbb_covar3[,c(2,4,7,8,14,15)]
+msbb_covar4<- msbb_covar4 %>%
+  mutate(Region= ifelse(msbb_covar4$BrodmannArea == "BM10", "Prefrontal",".")) %>%
+  mutate(Region= ifelse(msbb_covar4$BrodmannArea == "BM22", "Temporal",Region)) %>%
+  mutate(Region= ifelse(msbb_covar4$BrodmannArea == "BM36", "Temporal",Region)) %>%
+  mutate(Region= ifelse(msbb_covar4$BrodmannArea == "BM44", "Prefrontal",Region)) 
+  
+#Select samples with ApoE status available
+unique(msbb_clin$Apo1)
+length(unique(msbb_clin$individualIdentifier)) #364
+
+msbb_clin2<-msbb_clin
+msbb_clin2<-msbb_clin2[!(is.na(msbb_clin2$Apo1)),]
+unique(msbb_clin2$Apo2)
+
+length(unique(msbb_clin2$individualIdentifier)) #195
+msbb_clin2$ApoE<- paste(msbb_clin2$Apo1,"",msbb_clin2$Apo2)
+msbb_clin2$ApoE<- gsub(" ", "",msbb_clin2$ApoE)
+table(msbb_clin2$ApoE)
+# 22  23  24  33  34  44 
+#  2  21   1 109  57   5 
+
+#Keep only APOE 33,34,44
+summary(is.na(msbb_clin2))
+table(msbb_clin2$RACE) #mostly white (1A,22B,12H,160W)
+colnames(msbb_clin2)
+msbb_clin3<- msbb_clin2[msbb_clin2$ApoE == "33" |msbb_clin2$ApoE == "34"|msbb_clin2$ApoE == "44",c(1:7,9,12)] 
+
+#Select covar with Apoe
+msbb_covar5<- msbb_covar4[msbb_covar4$individualIdentifier %in% msbb_clin3$individualIdentifier,]
+length(unique(msbb_covar5$individualIdentifier)) #163
+length(unique(msbb_covar5$sampleIdentifier)) #479
+
+#Merge datasets to create meta data
+msbb_meta<- dplyr::inner_join(msbb_covar5,msbb_clin3, by= "individualIdentifier")
+summary(msbb_meta$RACE == msbb_meta$RACE.inferred) #21 false
+summary(msbb_meta$SEX == msbb_meta$SEX.inferred) #3 false
+
+#Keep non-inferred RACE and SEX
+msbb_meta$SEX.inferred <- NULL
+msbb_meta$RACE.inferred<- NULL
+
+#Keep samples with braak and cerad info intact
+summary(is.na(msbb_meta$NP.1))
+summary(is.na(msbb_meta$bbscore)) #41 missing
+summary(is.na(msbb_meta$CDR))
+
+#Choose diagnosis based on braad, cerad, and cdr
+msbb_meta<- msbb_meta[!is.na(msbb_meta$bbscore),]
+msbb_meta<- msbb_meta  %>%
+  mutate(Diagnosis= ifelse(NP.1 >= 2 & bbscore >=4 & CDR >=1, "AD", NA)) %>%
+  mutate(Diagnosis= ifelse(NP.1 <= 1 & bbscore <= 3 & CDR <= 0.5, "Control",Diagnosis)) 
+  
+msbb_metav2<- msbb_meta[!(is.na(msbb_meta$Diagnosis)),] #261 samples
+length(unique(msbb_metav2$individualIdentifier)) #93 individuals
+
+#Add information about age, group in decades
+colnames(msbb_metav2)[8]<- "Age"
+class(msbb_metav2$Age) #character
+range(msbb_metav2$Age)
+
+msbb_metav2<- msbb_metav2 %>%
+mutate(Age= ifelse(Age == "90+","90", Age)) 
+msbb_metav2$Age<- as.numeric(msbb_metav2$Age)
+class(msbb_metav2$Age)
+msbb_metav2$Age2<- as.numeric(msbb_metav2$Age)
+msbb_metav2<- msbb_metav2 %>%
+  mutate(Age2= ifelse(Age2 >= 50 & Age2 < 60,"50s", Age2)) %>%
+  mutate(Age2= ifelse(Age2 >= 60 & Age2 < 70,"60s", Age2)) %>%
+  mutate(Age2= ifelse(Age2 >= 70 & Age2 < 80,"70s", Age2)) %>%
+  mutate(Age2= ifelse(Age2 >= 80 & Age2 < 90,"80s", Age2)) %>%
+  mutate(Age2= ifelse(Age2 == "90","90s", Age2)) 
+unique(msbb_metav2$Age2)# "80s" "70s" "90s" "60s"
+ 
+for (i in unique(msbb_metav2$BrodmannArea)){
+  nsamples<- length(unique(msbb_metav2$sampleIdentifier[msbb_metav2$BrodmannArea == i]))
+  nindiv<- length(unique(msbb_metav2$individualIdentifier[msbb_metav2$BrodmannArea == i]))
+  print(paste("samples:",nsamples,"individuals:",nindiv,"for",i))
+}
+#no duplicates for BM10 & BM44
+```
+
+Sort multiple sample issue; Use most recent assay\
+```{r}
+msbb_meta10<- msbb_metav2[msbb_metav2$BrodmannArea == "BM10",] 
+msbb_meta22<- msbb_metav2[msbb_metav2$BrodmannArea == "BM22",]  
+msbb_meta36<- msbb_metav2[msbb_metav2$BrodmannArea == "BM36",]  
+msbb_meta44<- msbb_metav2[msbb_metav2$BrodmannArea == "BM44",]  
+  
+dup_nomore<- function(i){
+  print(paste("msbb_meta",i,"x<- data.frame(table(msbb_meta",i,"$individualIdentifier))",sep=""))
+  print(paste("colnames(msbb_meta",i,"x)[1]<- 'individualIdentifier' ",sep=""))
+  print(paste("msbb_meta",i,"x<- dplyr::inner_join(msbb_meta",i,",msbb_meta",i,"x, by= 'individualIdentifier')",sep=""))
+  
+  print(paste("unique(msbb_meta",i,"x$Freq)",sep=""))
+  print(paste("msbb_meta",i,"NR<- msbb_meta",i,"x[msbb_meta",i,"x$Freq == 1,]",sep=""))
+  print(paste("msbb_meta",i,"R<- msbb_meta",i,"x[msbb_meta",i,"x$Freq != 1,]",sep=""))
+  print(paste("msbb_meta",i,"Rx<- msbb_meta",i,"R[!duplicated(msbb_meta",i,"R$individualIdentifier),]",sep=""))
+  print(paste("msbb_meta",i,"y<- rbind(msbb_meta",i,"NR,msbb_meta",i,"Rx)",sep=""))  
+}
+
+#eval(expr = parse(text = dup_nomore(22))) 
+#Look at repeated sampling; keep resequenced and the other unique samples
+msbb_meta22x<- data.frame(table(msbb_meta22$individualIdentifier))
+colnames(msbb_meta22x)[1]<- 'individualIdentifier' 
+msbb_meta22x<- dplyr::inner_join(msbb_meta22,msbb_meta22x, by= 'individualIdentifier')
+unique(msbb_meta22x$Freq)
+msbb_meta22NR<- msbb_meta22x[msbb_meta22x$Freq == 1,]
+msbb_meta22R<- msbb_meta22x[msbb_meta22x$Freq != 1,]
+msbb_meta22Rx<- msbb_meta22R[!duplicated(msbb_meta22R$individualIdentifier),]
+msbb_meta22y<- rbind(msbb_meta22NR,msbb_meta22Rx)
+rm(msbb_meta22x,msbb_meta22NR, msbb_meta22R,msbb_meta22Rx )
+   
+#eval(expr = parse(text = dup_nomore(36)))     
+#Look at repeated sampling; keep resequenced and the other unique samples
+msbb_meta36x<- data.frame(table(msbb_meta36$individualIdentifier))
+colnames(msbb_meta36x)[1]<- 'individualIdentifier' 
+msbb_meta36x<- dplyr::inner_join(msbb_meta36,msbb_meta36x, by= 'individualIdentifier')
+unique(msbb_meta36x$Freq)
+msbb_meta36NR<- msbb_meta36x[msbb_meta36x$Freq == 1,]
+msbb_meta36R<- msbb_meta36x[msbb_meta36x$Freq != 1,]
+msbb_meta36Rx<-msbb_meta36R[grep("_resequenced", msbb_meta36R$sampleIdentifier),]
+msbb_meta36y<- rbind(msbb_meta36NR,msbb_meta36Rx)
+rm(msbb_meta36x,msbb_meta36NR, msbb_meta36R,msbb_meta36Rx )
+
+msbb_metav3<- rbind(msbb_meta10,msbb_meta22y[,-16], msbb_meta36y[,-16],msbb_meta44) #255
+for (i in unique(msbb_metav3$BrodmannArea)){
+  nsamples<- length(unique(msbb_metav3$sampleIdentifier[msbb_metav3$BrodmannArea == i]))
+  nindiv<- length(unique(msbb_metav3$individualIdentifier[msbb_metav3$BrodmannArea == i]))
+  print(paste("samples:",nsamples,"individuals:",nindiv,"for",i))
+}
+```
+
+Select protein coding genes & Select samples present in msbb_meta\
+```{r}
+msbb_data2<- msbb_data[c(5:60729),] 
+class(msbb_data2$feature) #character
+msbb_data2$feature<-gsub("\\..*","",msbb_data2$feature)  #remove numnber after . in the ensembl id
+length(unique((msbb_data2$feature))) #60275
+rownames(msbb_data2)<- msbb_data2$feature
+msbb_data3<- msbb_data2[,c(colnames(msbb_data2) %in% msbb_metav3$sampleIdentifier) ] #255 samples
+ 
+sum(rownames(msbb_data3) %in% ProteinCodingGenes$ensembl_gene_id) # 19679/60275
+msbb_data4<- msbb_data3[rownames(msbb_data3) %in% ProteinCodingGenes$ensembl_gene_id,] #19679 255
+length(unique(msbb_metav3$individualIdentifier)) #93 
+```
+
+Save meta and count data\
+```{r}
+colnames(msbb_metav3)#[c(4,7,10)]<- c("Batch","Race","Sex")
+
+setwd("/home/Box/Bulk_RNASeq_Data/MSBB")
+write.csv(msbb_metav3, file="MSBB_metasubset_93inv_255samp.csv")
+write.csv(msbb_data4, file="MSBB_countsubset_93inv_255samp.csv")
+```

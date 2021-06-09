@@ -1,0 +1,193 @@
+---
+title: "ROSMAP_DLPFC_RNASeq_DE"
+author: "Stella Belonwu"
+date: "06/08/2021"
+output: html_document
+---
+Goal: Select APOE 33, 34, and 44 samples and corresponding meta and count data from reprocessed ROSMAP Dorsolateral Prefrontal Cortex RNA-Seq Data\
+Synapse ID:syn3388564\
+DOI: 10.7303/syn3388564\
+https://www.synapse.org/#!Synapse:syn3388564\
+
+Diagnosis selection based on clinical codebook\
+AD: Braak >= 4, Cerad <=2, cogdx= ad + no other\
+Control: Braak <= 3, Cerad >=3, cogdx= nci\
+
+Input data
+```{r}
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+rosmap_clin<- read.csv("ROSMAP_Clinical_2019-05_v2.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rosmap_idkey<- read.csv("ROSMAP_IDkey.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+rosmap_data<- read.table("ROSMAP_all_counts_matrix.txt",header= TRUE, sep = "\t", stringsAsFactors=FALSE)
+rosmap_covar<- read.table("AMP_AD_ROSMAP_Broad-Rush_RNA_Seq_RIN.txt",header= TRUE, sep = "\t", stringsAsFactors=FALSE) #for batch information
+ProteinCodingGenes<- read.csv("ensembl_ProteinCodingGenes.csv",header= TRUE, sep = ",", stringsAsFactors=FALSE)
+```
+
+Notes/ Clinical Codebook: https://www.synapse.org/#!Synapse:syn3191087\
+
+Load necessary libraries\
+```{r}
+library(DESeq2) 
+library(tidyverse)
+library(tximport)
+library(ggrepel)
+library(magrittr)
+library(dplyr)
+```
+
+Set-up meta data\
+Criteria from meta-analysis paper (https://www.biorxiv.org/content/biorxiv/early/2019/01/03/510420.full.pdf)\
+https://www.sciencedirect.com/science/article/pii/S2211124720308895?via%3Dihub\
+Control: Braak <=3, CERAD >=3 or Possible and No AD, Cogdx= 1 or NCI\
+AD: Braak >=4, CERAD <=2, Cogdx = 4 or AD and no other cause\
+msex=1 = Male, 0 = Female\
+race= 1=White, 2=Black or African-American, 3=American Indian or Alaska Native,4=Native Hawaiian or Other Pacific Islander, 5=Asian, 7=Other, 9=Unknown\
+spanish= Spanish/Hispanic/Latino origin: 1=Yes, 2=No\
+```{r}
+colnames(rosmap_clin)
+rosmap_clin2<- rosmap_clin[,c(1:3,5:7,10,14,15,16)]  #keep braak this time
+colnames(rosmap_clin2)[c(3:7)]<- c("Sex", "Race","Spanish","ApoE","Age")
+length(unique(rosmap_clin2$projid)) #3583
+table(rosmap_clin2$ApoE)
+
+library(dplyr)
+rosmap_clin3<- dplyr::inner_join(rosmap_clin2, rosmap_idkey[,c(1,5)], by ="projid")
+
+#Create new column to designate diagnosis based on meta analysis paper
+rosmap_clin3<- rosmap_clin3 %>%
+    mutate(Diagnosis= ifelse(braaksc <=3 & cogdx == 1 & ceradsc >=3, "Control", NA )) %>%
+    mutate(Diagnosis= ifelse(braaksc >=4 & cogdx == 4 & ceradsc <=2, "AD", Diagnosis ))
+table(rosmap_clin3$Diagnosis) #418 AD, 207 Control
+
+#Definite and probable = yes, Possible, NO AD = no
+rosmap_clin3<- rosmap_clin3 %>%
+  mutate(cerad= ifelse(ceradsc == 1, "Definite", ceradsc)) %>%
+  mutate(cerad= ifelse(ceradsc == 2, "Probable", cerad)) %>%
+  mutate(cerad= ifelse(ceradsc == 3, "Possible", cerad)) %>%
+  mutate(cerad= ifelse(ceradsc == 4, "No AD", cerad)) %>%
+  mutate(cogdx2= ifelse(cogdx == 1, "No impairment", cogdx)) %>%
+    mutate(cogdx2= ifelse(cogdx == 2, "Mild impairment", cogdx2)) %>%
+    mutate(cogdx2= ifelse(cogdx == 3, "Mild impairment and another cause", cogdx2)) %>%
+    mutate(cogdx2= ifelse(cogdx == 4, "AD", cogdx2)) %>%
+    mutate(cogdx2= ifelse(cogdx == 5, "AD and another cause ", cogdx2)) %>%
+    mutate(cogdx2= ifelse(cogdx == 6, "Other dementia", cogdx2)) %>%
+    mutate(Sex= ifelse(Sex == 1, "Male", "Female"))  %>%
+    mutate(Race= ifelse(Race == 1, "White", Race))  %>%
+    mutate(Race= ifelse(Race == 2, "Black", Race))  %>%
+    mutate(Race= ifelse(Race == 3, "American Indian or Alaska Native", Race))  %>%
+    mutate(Race= ifelse(Race == 4, "Native Hawaiian or Other Pacific Islander", Race))  %>%
+    mutate(Race= ifelse(Race == 5, "Asian", Race))  %>%
+    mutate(Race= ifelse(Race == 6, "Other", Race))  %>%
+    mutate(Race= ifelse(Race == 7, "Unknown", Race)) 
+
+rosmap_clin3<- rosmap_clin3 %>% #fix spanish
+   mutate(Spanish= ifelse(Spanish == 1, "Yes", Spanish)) %>%
+   mutate(Spanish= ifelse(Spanish== 2, "No", Spanish))
+
+rosmap_clin3<- rosmap_clin3 %>%
+mutate(Age= ifelse(Age == "90+","90", Age)) 
+rosmap_clin3$Age<- as.numeric(rosmap_clin3$Age)
+class(rosmap_clin3$Age)
+
+rosmap_clin3<- rosmap_clin3 %>%
+  mutate(Age= ifelse(Age >= 60 & Age < 70,"60s", Age)) %>%
+  mutate(Age= ifelse(Age >= 70 & Age < 80,"70s", Age)) %>%
+  mutate(Age= ifelse(Age >= 80 & Age < 90,"80s", Age)) %>%
+    mutate(Age= ifelse(is.na(Age),"U", Age)) %>%
+  mutate(Age= ifelse(Age == "90","90s", Age)) 
+
+table(rosmap_clin3$Age)
+
+#Remove rows without RNAseq ID and without a diagnosis
+rosmap_clin4<- rosmap_clin3[rosmap_clin3$rnaseq_id != "",]
+rosmap_meta<-rosmap_clin4[!(is.na(rosmap_clin4$Diagnosis)),]
+
+table(rosmap_meta$Diagnosis) #158AD, 98 Control
+table(rosmap_meta$cerad) 
+table(rosmap_meta$cogdx2) 
+table(rosmap_meta$dcfdx_lv)
+```
+
+Select meta data: Keep only APOE33 & 34\
+```{r}
+#Select necessary columns and rows (ApoE 33,34,44)
+colnames(rosmap_meta)
+table(rosmap_meta$ApoE) #22(2), 23(24), 24(5), 33(155),34(67), 44(3)
+table(rosmap_meta$Sex) #169 females, 87 males
+table(rosmap_meta$Race) #2 black, 254 white
+rosmap_meta2<- rosmap_meta[rosmap_meta$ApoE == 33| rosmap_meta$ApoE == 34| rosmap_meta$ApoE == 44, c(11,12,1:7) ] #removes 2 22s, 24 23s, and 5 24s
+table(rosmap_meta2$Sex) #149 F, 76 M
+table(rosmap_meta2$Diagnosis) #145AD 80C
+table(rosmap_meta2$Study) #107  map, 118 ros
+rosmap_meta2$ID<- paste0("X",rosmap_meta2$rnaseq_id)
+
+range(rosmap_covar$RINcontinuous)
+unique(rosmap_covar$RINcontinuous)
+colnames(rosmap_covar)[2]<- "rnaseq_id"
+
+length(unique(rosmap_covar$projid)) #601
+length(unique(rosmap_covar$rnaseq_id)) #638
+length(unique(rosmap_covar$ID)) #640
+
+rosmap_covar2<- rosmap_covar[!duplicated(rosmap_covar$rnaseq_id),]
+rosmap_meta3<- dplyr::inner_join(rosmap_meta2, rosmap_covar2, by ="rnaseq_id") 
+
+colnames(rosmap_meta3)
+rosmap_meta3<- rosmap_meta3[,c(1,2,4:10,12)]
+
+length(unique(rosmap_meta3$ID.x)) #214 are unique compared to 225
+rosmap_meta3<- rosmap_meta3[!duplicated(rosmap_meta3),]
+
+rownames(rosmap_meta3)<- rosmap_meta3$ID.x
+table(rosmap_meta3$ApoE) #33(145), 34(66), 44(3)
+table(rosmap_meta3$Sex) #139 F, 75 M
+table(rosmap_meta3$Study) #107  map, 107 ros
+table(rosmap_meta3$Diagnosis) #144 AD 70 Control; 214 total
+rosmap_meta3<- rosmap_meta3[,c(2:8,10)]
+```
+
+Format data
+```{r}
+rosmap_data2<- rosmap_data[-c(1:4),]
+
+class(rosmap_data2$feature) #character
+rosmap_data2$feature<-gsub("\\..*","",rosmap_data2$feature) 
+length(unique((rosmap_data2$feature))) #60275
+
+rownames(rosmap_data2)<- rosmap_data2$feature
+sum(rownames(rosmap_data2) %in% ProteinCodingGenes$ensembl_gene_id) # 19679/60275 
+rosmap_data3<- rosmap_data2[rosmap_data2$feature %in% ProteinCodingGenes$ensembl_gene_id,]
+ 
+#Select samples in final meta table
+rosmap_data4<- rosmap_data3[,c(colnames(rosmap_data3) %in% rownames(rosmap_meta3))]
+```
+
+Match order of meta and count sample names
+```{r} 
+summary(rownames(rosmap_meta3) %in% colnames(rosmap_data)) #214 TRUE
+summary(rownames(rosmap_meta3) == colnames(rosmap_data)) #213 FALSE, 1 TRUE 
+ 
+match(colnames(rosmap_data),rownames(rosmap_meta3)) #returns the position of the matches (indices) with respect to the second vector
+ros_idx<- match(colnames(rosmap_data),rownames(rosmap_meta3))
+rosmap_meta4<- rosmap_meta3[ros_idx,] #rearrange rows
+summary(rownames(rosmap_meta4) == colnames(rosmap_data)) # 214 TRUE
+
+setwd("/home/Box/Bulk_RNASeq_Data/ROSMAP")
+write.csv(rosmap_data4, file="ROSMAP_dds_data.csv")
+write.csv(rosmap_meta4, file="ROSMAP_dds_meta.csv")
+```
+
+EDA on ROSMAP Dataset to be analyzed
+```{r}
+table(rosmap_meta4$Diagnosis) # AD 144, Control 70
+table(rosmap_meta4$Sex) # 139F, 75M
+table(rosmap_meta4$ApoE) #33(145),34(66), 44(3)
+table(rosmap_meta4$Study) #107 map, 107 ros
+table(rosmap_meta4$Race) #2 Black, 212 White
+table(rosmap_meta4$ApoE[rosmap_meta4$Diagnosis == "AD"]) #33(83), 34(59), 44(2)
+table(rosmap_meta4$ApoE[rosmap_meta4$Diagnosis != "AD"]) #33 (62), 34 (7), 44(1)
+table(rosmap_meta4$Sex[rosmap_meta4$Diagnosis == "AD"]) #102 f, 42m
+table(rosmap_meta4$Sex[rosmap_meta4$Diagnosis != "AD"]) #37f, 33m
+table(rosmap_meta4$Sex[rosmap_meta4$Diagnosis == "AD"], rosmap_meta4$ApoE[rosmap_meta4$Diagnosis == "AD"]) #102 f, 42m
+table(rosmap_meta4$Sex[rosmap_meta4$Diagnosis != "AD"], rosmap_meta4$ApoE[rosmap_meta4$Diagnosis != "AD"]) #37f, 33m
+```
